@@ -587,3 +587,35 @@ body.dark .pmsg-lb-info,
 body[data-theme="dark"] .pmsg-lb-info { background: #2c2c2e; color: #a0a0a0; border-color: #38383a; }
 body.dark .pmsg-set-section,
 body[data-theme="dark"] .pmsg-set-section { color: #a0a0a0; border-color: #38383a; }
+.pmsg-image-wrap {
+    max-width: 220px;
+    border-radius: 16px;
+    overflow: hidden;
+    background: #f2f2f7;
+}
+
+.pmsg-image {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-width: 220px;
+    border-radius: 16px;
+}
+
+.pmsg-image-caption {
+    font-size: 12px;
+    line-height: 1.35;
+    color: #6c6c70;
+    padding: 6px 8px 2px;
+    white-space: pre-wrap;
+}
+
+body.dark .pmsg-image-wrap,
+body[data-theme="dark"] .pmsg-image-wrap {
+    background: #2c2c2e;
+}
+
+body.dark .pmsg-image-caption,
+body[data-theme="dark"] .pmsg-image-caption {
+    color: #b0b0b5;
+}
