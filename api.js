@@ -51,11 +51,13 @@ export async function callExtraLLM(prompt, opts = {}) {
         temperature: opts.temperature ?? s.extraApi?.temperature ?? 0.9,
         max_tokens: opts.maxTokens ?? s.extraApi?.maxTokens ?? 800,
     };
+
     const resp = await fetch(url, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
     });
+
     if (!resp.ok) {
         const t = await resp.text().catch(() => '');
         throw new Error(`HTTP ${resp.status}: ${t.slice(0, 200)}`);
@@ -92,6 +94,7 @@ function getImageConfig() {
                 model: iig.model,
                 size: iig.size || '1024x1024',
                 apiType: iig.apiType || 'openai',
+                aspectRatio: iig.aspectRatio,
                 source: 'sillyimages',
             };
         }
@@ -106,11 +109,13 @@ export function isImageApiConfigured() {
 export async function generateImage(prompt) {
     const cfg = getImageConfig();
     if (!cfg) throw new Error('Image API не настроен');
+
     const s = getSettings();
     const prefix = (s.imagePromptPrefix || '').trim();
     const suffix = (s.imagePromptSuffix || '').trim();
     const negative = (s.imageNegativePrompt || '').trim();
     const fullPrompt = [prefix, prompt, suffix].filter(Boolean).join(', ');
+
     const url = `${cfg.endpoint}/v1/images/generations`;
     const body = {
         model: cfg.model,
@@ -120,15 +125,18 @@ export async function generateImage(prompt) {
         response_format: 'b64_json',
     };
     if (negative) body.negative_prompt = negative;
+
     const resp = await fetch(url, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
     });
+
     if (!resp.ok) {
         const t = await resp.text().catch(() => '');
         throw new Error(`Image API ${resp.status}: ${t.slice(0, 200)}`);
     }
+
     const data = await resp.json();
     const item = data.data?.[0];
     if (!item) throw new Error('Пустой ответ');
