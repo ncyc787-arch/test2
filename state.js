@@ -36,7 +36,6 @@ const DEFAULT_SETTINGS = {
     imagePromptSuffix: '',
     imageNegativePrompt: 'cartoon, anime, deformed, blurry, low quality, watermark',
     avatars: {},
-    // Мост
     bridgeEnabled: true,
     bridgeIncomingTag: 'телефон',
     bridgeContactTag: 'контакт',
@@ -87,16 +86,36 @@ export function saveState() {
     if (c?.saveMetadata) c.saveMetadata();
 }
 
-export function addMessage(npcId, sender, text) {
+function stripPhoneServiceTags(text) {
+    if (!text) return '';
+    return String(text)
+        .replace(/<horae>\s*<\/horae>/gi, '')
+        .replace(/<horaeevent>\s*<\/horaeevent>/gi, '')
+        .replace(/<horae>[\s\S]*?<\/horae>/gi, '')
+        .replace(/<horaeevent>[\s\S]*?<\/horaeevent>/gi, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+}
+
+export function addMessage(npcId, sender, text, extra = {}) {
     const state = getState();
     if (!state.conversations[npcId]) state.conversations[npcId] = [];
     const now = Date.now();
+
+    const type = extra.type || 'text';
+    const cleanText = stripPhoneServiceTags(text);
+
     const msg = {
         sender,
-        text,
+        text: cleanText,
         ts: now,
         time: new Date(now).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+        type,
+        imageUrl: extra.imageUrl || null,
+        caption: stripPhoneServiceTags(extra.caption || ''),
+        injectText: stripPhoneServiceTags(extra.injectText || ''),
     };
+
     state.conversations[npcId].push(msg);
     saveState();
     return msg;
