@@ -53,8 +53,6 @@ function createFAB() {
     fab.style.bottom = 'auto';
 
     (document.documentElement || document.body).appendChild(fab);
-    console.log(LOG, `FAB создан`);
-
     makeFabDraggable(fab);
 
     const guard = () => {
@@ -129,9 +127,6 @@ function hideBadge() {
     if (badge) badge.style.display = 'none';
 }
 
-// ═══════════════════════════════════════════════
-// ОБОЛОЧКА
-// ═══════════════════════════════════════════════
 function createPhoneShell() {
     if (document.getElementById('phonemsg-shell')) return;
     const shell = document.createElement('div');
@@ -284,6 +279,12 @@ async function handleShellClick(e) {
         setView('list');
         await reloadContacts();
         renderScreen();
+    } else if (action === 'clear-avatar') {
+        const id = el.dataset.id;
+        if (!id) return;
+        const { clearCustomAvatar } = await import('./state.js');
+        clearCustomAvatar(id);
+        renderScreen();
     }
 }
 
@@ -308,36 +309,30 @@ function handleShellInput(e) {
     }
 }
 
-// ═══════════════════════════════════════════════
-// ОТПРАВКА (с правильной последовательностью моста)
-// ═══════════════════════════════════════════════
 async function handleSend(contact, text) {
     const c = ctx();
     const userName = c?.name1 || 'Me';
 
-    // 1. Сохраняем сообщение юзера в переписку
     const userMsg = addMessage(contact.id, userName, text);
     appendBubble(contact.id, userMsg, userName);
 
-    // 2. Обновляем инжект (теперь в нём есть сообщение юзера)
     rebuildConversationsInject();
 
-    // 3. Пушим скрытый маркер в c.chat[] ("юзер только что отправил")
     try { await pushOutgoingSystemMarker(contact, text); }
     catch (e) { console.error(LOG, 'bridge marker failed:', e); }
 
-    // 4. Генерируем ответ НПС
     showTyping();
     const reply = await generateNPCReply(contact, text);
     hideTyping();
 
-    // 5. Сохраняем ответ НПС в переписку
     if (reply) {
-        const npcMsg = addMessage(contact.id, contact.name, reply);
+        const npcMsg = addMessage(contact.id, contact.name, reply.text || '', {
+            type: reply.type || 'text',
+            imageUrl: reply.imageUrl || null,
+            caption: reply.caption || '',
+            injectText: reply.injectText || '',
+        });
         appendBubble(contact.id, npcMsg, userName);
-
-        // 6. ОБНОВЛЯЕМ ИНЖЕКТ (теперь в нём есть ответ НПС!)
-        //    Это критично — главный бот должен видеть что НПС ответил.
         rebuildConversationsInject();
     }
 }
@@ -351,7 +346,12 @@ async function handleAutoMessage(contact) {
     const reply = await generateNPCReply(contact, autoPrompt);
 
     if (reply) {
-        const npcMsg = addMessage(contact.id, contact.name, reply);
+        const npcMsg = addMessage(contact.id, contact.name, reply.text || '', {
+            type: reply.type || 'text',
+            imageUrl: reply.imageUrl || null,
+            caption: reply.caption || '',
+            injectText: reply.injectText || '',
+        });
         if (phoneOpen && currentContact?.id === contact.id) {
             appendBubble(contact.id, npcMsg, userName);
         }
@@ -359,19 +359,12 @@ async function handleAutoMessage(contact) {
     }
 }
 
-// ═══════════════════════════════════════════════
-// ПЕРЕЗАГРУЗКА КОНТАКТОВ
-// ═══════════════════════════════════════════════
 async function reloadContacts() {
     const contacts = await loadAllContacts();
     setContacts(contacts);
-    console.log(LOG, `Контактов: ${contacts.length}`);
     if (phoneOpen) renderScreen();
 }
 
-// ═══════════════════════════════════════════════
-// MESSAGE_RECEIVED — обработка входящих из чата
-// ═══════════════════════════════════════════════
 async function onMessageReceived(messageIndex) {
     const c = ctx();
     if (!c || !c.chat) return;
@@ -383,7 +376,6 @@ async function onMessageReceived(messageIndex) {
         if (changed) {
             await reloadContacts();
             showBadge();
-            // Обновляем инжект — появились новые смс в телефоне
             rebuildConversationsInject();
         }
     } catch (e) {
@@ -391,9 +383,6 @@ async function onMessageReceived(messageIndex) {
     }
 }
 
-// ═══════════════════════════════════════════════
-// ИНИЦИАЛИЗАЦИЯ
-// ═══════════════════════════════════════════════
 function init() {
     try {
         createFAB();
@@ -406,13 +395,11 @@ function init() {
 
     if (eventSource && event_types) {
         eventSource.on(event_types.CHAT_CHANGED, async () => {
-            console.log(LOG, 'CHAT_CHANGED');
             currentContact = null;
             setView('list');
             setCurrentContactId(null);
             await reloadContacts();
-            try { await processExistingChat(); }
-            catch (e) { console.warn(LOG, 'processExistingChat:', e); }
+            try { await processExistingChat(); } catch (e) { console.warn(LOG, 'processExistingChat:', e); }
             hideMarkersInDOM();
             rebuildConversationsInject();
             if (phoneOpen) renderScreen();
@@ -421,7 +408,7 @@ function init() {
         if (event_types.APP_READY) {
             eventSource.on(event_types.APP_READY, async () => {
                 await reloadContacts();
-                try { await processExistingChat(); } catch { /* ignore */ }
+                try { await processExistingChat(); } catch {}
                 hideMarkersInDOM();
                 rebuildConversationsInject();
             });
@@ -448,16 +435,14 @@ function init() {
     setTimeout(async () => {
         try {
             await reloadContacts();
-            try { await processExistingChat(); } catch { /* ignore */ }
+            try { await processExistingChat(); } catch {}
             hideMarkersInDOM();
             rebuildConversationsInject();
-            console.log(LOG, `Ready ✓ (${getContacts().length} контактов)`);
         } catch (e) {
             console.warn(LOG, 'Отложенная загрузка:', e);
         }
     }, 1500);
 
-    // Периодически скрываем маркеры на случай перерендера ST
     setInterval(hideMarkersInDOM, 3000);
 }
 
