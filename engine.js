@@ -1,11 +1,11 @@
-// engine.js — генерация ответов НПС, загрузка лорбука, автосообщения
+// engine.js — логика генерации НПС и разбор img-тегов для PhoneMSG
 
 import { chat_metadata } from '../../../../script.js';
 import {
     addMessage, getConversation, getContacts, getNpcMeta, updateNpcMeta,
     getSettings, getDynamicContacts
 } from './state.js';
-import { callExtraLLM, isExtraLLMConfigured, generateImage, isImageApiConfigured } from './api.js';
+import { callExtraLLM, isExtraLLMConfigured, extractImagesFromMessage } from './api.js';
 
 const LOG = '[PhoneMSG-Engine]';
 const ctx = () => (typeof SillyTavern?.getContext === 'function' ? SillyTavern.getContext() : null);
@@ -117,50 +117,47 @@ function stripServiceLines(text) {
         .replace(/<horaeevent>\s*<\/horaeevent>/gi, '')
         .replace(/<horae>[\s\S]*?<\/horae>/gi, '')
         .replace(/<horaeevent>[\s\S]*?<\/horaeevent>/gi, '')
-        .split('\n')
-        .filter(line => {
-            const l = line.trim().toLowerCase();
-            if (!l) return true;
-            return !(
-                l.startsWith('event:') ||
-                l.startsWith('time:') ||
-                l.startsWith('npc:') ||
-                l.startsWith('location:') ||
-                l.startsWith('atmosphere:') ||
-                l.startsWith('characters:') ||
-                l.startsWith('costume:') ||
-                l.startsWith('affection:') ||
-                l.startsWith('character:') ||
-                l.startsWith('race:') ||
-                l.startsWith('occupation:') ||
-                l.startsWith('gender:') ||
-                l.startsWith('age:') ||
-                (/^[a-z_]+:/.test(l) && l.includes('|'))
-            );
-        })
-        .join('\n')
         .trim();
 }
 
-function looksLikeImageRequest(text) {
-    const t = String(text || '').toLowerCase();
-    return (
-        t.includes('скинь фот') ||
-        t.includes('пришли фот') ||
-        t.includes('отправь фот') ||
-        t.includes('покажи себя') ||
-        t.includes('селфи') ||
-        t.includes('скинь пик') ||
-        t.includes('send photo') ||
-        t.includes('send pic') ||
-        t.includes('send selfie')
-    );
-}
+// Разбор ответа модели: вытаскиваем обычный текст и <img ...> c data-iig-instruction
+export function parseModelReply(rawText) {
+    const text = String(rawText || '');
+    const imgPattern = /<img\s+([^>]*data-iig-instruction=['"][^'"]*['"][^>]*)>/gi;
 
-function summarizeImagePrompt(text) {
-    const clean = stripServiceLines(text).replace(/\s+/g, ' ').trim();
-    if (!clean) return 'фото';
-    return clean.slice(0, 120);
+    const images = [];
+    let cleaned = '';
+    let lastIndex = 0;
+    let m;
+
+    while ((m = imgPattern.exec(text)) !== null) {
+        const fullTag = m[0];
+        const attrs = m[1];
+
+        cleaned += text.slice(lastIndex, m.index);
+        lastIndex = m.index + fullTag.length;
+
+        const instrMatch = attrs.match(/data-iig-instruction=['"]([^'"]+)['"]/i);
+        const srcMatch = attrs.match(/\ssrc=['"]([^'"]+)['"]/i);
+        if (!instrMatch) continue;
+
+        try {
+            const json = JSON.parse(instrMatch[1]);
+            images.push({
+                rawTag: fullTag,
+                instruction: json,
+                src: srcMatch ? srcMatch[1] : null,
+            });
+        } catch (e) {
+            console.warn(LOG, 'bad data-iig-instruction JSON:', e);
+        }
+    }
+    cleaned += text.slice(lastIndex);
+
+    return {
+        text: stripServiceLines(cleaned).trim(),
+        images,
+    };
 }
 
 export async function generateNPCReply(contact, userMessage) {
@@ -204,12 +201,19 @@ ${chatHistory || 'Контекст ещё отсутствует.'}
 СОСТОЯНИЕ:
 - Привязанность к ${userName}: ${meta.affection}/100
 
+ФОРМАТ ОТВЕТА:
+- Сначала обычный текст сообщения (смс) БЕЗ html-разметки.
+- Сразу после текста, на отдельных строках, один или несколько тегов:
+  <img data-iig-instruction='{"prompt":"...","aspect_ratio":"...","image_size":"..."}' src="[IMG:GEN]">
+- data-iig-instruction должен быть валидным JSON в одинарных кавычках.
+- src ВСЕГДА "[IMG:GEN]" для НОВЫХ картинок.
+- В каждом ответе ДОЛЖНА быть как минимум одна картинка.
+- Не используй другие HTML-теги.
+
 ПРАВИЛА:
-- Пиши ТОЛЬКО текст смс
-- Без звёздочек, нарратива, метакомментариев
-- НИКОГДА не пиши служебные строки "event:", "time:", "npc:", "location:"
-- Если пользователь просит фото/селфи/картинку, ответь КОРОТКИМ описанием того, что должно быть на фото, без пояснений и без имени персонажа
-- Язык и стиль соответствуют сеттингу`;
+- Не пиши ничего вне текста + <img ...> тегов.
+- Не пиши "sensual", "erotic", "intimate" и т.п. в тегах.
+- Для описания сцены и стиля используй формат, описанный в системных инструкциях img_system.`;
 
     const userPrompt = phoneHistory
         ? `[Переписка]\n${phoneHistory}\n\n[Новое от ${userName}]: ${userMessage}\n\nОтветь как ${contact.name}:`
@@ -218,47 +222,45 @@ ${chatHistory || 'Контекст ещё отсутствует.'}
     const finalSystem = systemPrompt.replace(/\{\{user\}\}/g, userName);
     const finalUser = userPrompt.replace(/\{\{user\}\}/g, userName);
 
-    let reply = '';
+    let replyText = '';
     try {
         if (!s.useMainApi && isExtraLLMConfigured()) {
-            reply = await callExtraLLM(finalUser, { system: finalSystem });
+            replyText = await callExtraLLM(finalUser, { system: finalSystem });
         } else {
-            reply = await c.generateRaw({ prompt: finalUser, systemPrompt: finalSystem });
+            replyText = await c.generateRaw({ prompt: finalUser, systemPrompt: finalSystem });
         }
     } catch (err) {
         console.error(LOG, 'Генерация не удалась:', err);
         return { type: 'text', text: '...' };
     }
 
-    let clean = String(reply || '')
-        .replace(/<think>[\s\S]*?<\/think>/gi, '')
-        .replace(/<thinking>[\s\S]*?<\/thinking>/gi, '')
-        .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '')
-        .replace(/^[А-ЯЁA-Z][а-яёa-zA-Z]+\s*:\s*/, '')
-        .trim();
+    const parsed = parseModelReply(replyText);
 
-    clean = stripServiceLines(clean);
-    updateNpcMeta(contact.id, { lastSeen: Date.now() });
+    if (parsed.images.length > 0) {
+        const first = parsed.images[0];
+        const instr = first.instruction || {};
 
-    if (looksLikeImageRequest(userMessage) && isImageApiConfigured()) {
-        try {
-            const imagePrompt = `${contact.name}, ${contact.description}. ${clean || 'casual candid phone photo'}`;
-            const imageUrl = await generateImage(imagePrompt);
-            return {
-                type: 'image',
-                text: '',
-                imageUrl,
-                caption: clean || 'Фото',
-                injectText: summarizeImagePrompt(clean || 'Фото'),
-            };
-        } catch (e) {
-            console.warn(LOG, 'generateImage failed, fallback to text:', e);
-        }
+        const caption = parsed.text || instr.caption || '';
+        const inject = instr.inject ||
+            (caption ? caption.slice(0, 120) : 'фото');
+
+        return {
+            type: 'image',
+            text: parsed.text,
+            imageInstruction: instr,
+            imageTag: first.rawTag,
+            caption,
+            injectText: inject,
+        };
     }
+
+    // fallback — чистый текст
+    const cleanText = stripServiceLines(parsed.text);
+    updateNpcMeta(contact.id, { lastSeen: Date.now() });
 
     return {
         type: 'text',
-        text: clean || '...',
+        text: cleanText || '...',
     };
 }
 
@@ -299,10 +301,4 @@ export function startAutoMessageScheduler(getContactsFn) {
             }
         }
     }, 60 * 1000);
-}
-
-export async function generateContactAvatar(contact) {
-    if (!isImageApiConfigured()) throw new Error('Image API не настроен');
-    const imgPrompt = `portrait photo of ${contact.name}, ${String(contact.description || '').slice(0, 200)}, dating app selfie, natural lighting`;
-    return await generateImage(imgPrompt);
 }
