@@ -44,18 +44,26 @@ export function filterVisibleText(text) {
         }).join('\n').trim();
 }
 
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+}[c]));
 
 function avatarHTML(contact, size = 44) {
     const color = contact.color || '#007AFF';
     const initial = (contact.name || '?').charAt(0).toUpperCase();
     const custom = getCustomAvatar(contact.id);
     const src = custom || contact.avatar || null;
+
     if (src) {
         return `<div class="pmsg-avatar" style="width:${size}px;height:${size}px;border-radius:50%;overflow:hidden;flex-shrink:0;">
             <img src="${esc(src)}" alt="${esc(initial)}" style="width:100%;height:100%;object-fit:cover;display:block;">
         </div>`;
     }
+
     const fontSize = Math.floor(size * 0.45);
     return `<div class="pmsg-avatar" style="background:${esc(color)};width:${size}px;height:${size}px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:${fontSize}px;font-weight:600;flex-shrink:0;">
         ${esc(initial)}
@@ -105,7 +113,8 @@ export function renderContactList(contacts) {
             </div>
             <div class="pmsg-contact-time">${esc(getLastTime(c.id))}</div>
         </div>
-    `;}).join('');
+    `;
+    }).join('');
 
     return `
         <div class="pmsg-header">
@@ -298,7 +307,7 @@ export function renderSettings() {
             <option value="">— не выбрано —</option>
             ${imgModels.map(m => `<option value="${esc(m)}" ${m === s.imageApi.model ? 'selected' : ''}>${esc(m)}</option>`).join('')}
            </select>`
-        : `<input type="text" class="pmsg-input" data-set-deep="imageApi.model" value="${esc(s.imageApi.model)}" placeholder="dall-e-3, flux-pro">`;
+        : `<input type="text" class="pmsg-input" data-set-deep="imageApi.model" value="${esc(s.imageApi.model)}" placeholder="dall-e-3, flux-pro, gemini-1.5-flash">`;
 
     const activeLb = getActiveLorebookName();
 
@@ -366,6 +375,14 @@ export function renderSettings() {
 
             <h3 class="pmsg-set-section">Image API (аватары и фото) ${imgStatus}</h3>
             <label class="pmsg-set-field">
+                <span>Тип API</span>
+                <select class="pmsg-input" data-set-deep="imageApi.apiType">
+                    <option value="openai" ${s.imageApi.apiType === 'openai' ? 'selected' : ''}>OpenAI / совместимые</option>
+                    <option value="gemini" ${s.imageApi.apiType === 'gemini' ? 'selected' : ''}>Gemini / banana</option>
+                    <option value="naistera" ${s.imageApi.apiType === 'naistera' ? 'selected' : ''}>Naistera / другое</option>
+                </select>
+            </label>
+            <label class="pmsg-set-field">
                 <span class="pmsg-checkbox-field">
                     <input type="checkbox" data-set="useSillyImagesConfig" ${s.useSillyImagesConfig ? 'checked' : ''}>
                     Если пусто — брать из sillyimages
@@ -384,12 +401,44 @@ export function renderSettings() {
                 <span>Модель</span>
                 ${imgModelOptions}
             </label>
+
+            ${s.imageApi.apiType === 'openai' ? `
             <label class="pmsg-set-field">
-                <span>Размер</span>
+                <span>Размер (size)</span>
                 <select class="pmsg-input" data-set-deep="imageApi.size">
                     ${['512x512', '768x768', '1024x1024', '1024x1536', '1536x1024'].map(sz => `<option value="${sz}" ${s.imageApi.size === sz ? 'selected' : ''}>${sz}</option>`).join('')}
                 </select>
             </label>
+            <label class="pmsg-set-field">
+                <span>Качество</span>
+                <select class="pmsg-input" data-set-deep="imageApi.quality">
+                    <option value="standard" ${s.imageApi.quality === 'standard' ? 'selected' : ''}>standard</option>
+                    <option value="hd" ${s.imageApi.quality === 'hd' ? 'selected' : ''}>hd</option>
+                </select>
+            </label>
+            ` : ''}
+
+            ${s.imageApi.apiType === 'gemini' ? `
+            <label class="pmsg-set-field">
+                <span>Aspect ratio</span>
+                <input type="text" class="pmsg-input" data-set-deep="imageApi.aspectRatio" value="${esc(s.imageApi.aspectRatio || '1:1')}" placeholder="1:1, 9:16, 16:9">
+            </label>
+            <label class="pmsg-set-field">
+                <span>Image size</span>
+                <input type="text" class="pmsg-input" data-set-deep="imageApi.imageSize" value="${esc(s.imageApi.imageSize || '1K')}" placeholder="1K, 2K">
+            </label>
+            ` : ''}
+
+            ${s.imageApi.apiType === 'naistera' ? `
+            <label class="pmsg-set-field">
+                <span>Aspect ratio</span>
+                <input type="text" class="pmsg-input" data-set-deep="imageApi.aspectRatio" value="${esc(s.imageApi.aspectRatio || '3:2')}">
+            </label>
+            <label class="pmsg-set-field">
+                <span>Preset</span>
+                <input type="text" class="pmsg-input" data-set-deep="imageApi.preset" value="${esc(s.imageApi.preset || 'digital')}">
+            </label>
+            ` : ''}
 
             <h3 class="pmsg-set-section">Промпты для картинок</h3>
             <label class="pmsg-set-field">
