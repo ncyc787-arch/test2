@@ -13,7 +13,7 @@ import {
     appendBubble, showTyping, hideTyping, handleSettingChange,
     setView, getView, setCurrentContactId
 } from './ui.js';
-import { fetchModels } from './api.js';
+
 import {
     pushOutgoingSystemMarker, processBotMessage, processExistingChat,
     hideMarkersInDOM, rebuildConversationsInject
