@@ -1,6 +1,9 @@
 // ui.js — интерфейс PhoneMSG: список, чат, настройки
 
-import { getConversation, getContacts, getSettings, saveSettings, getCustomAvatar } from './state.js';
+import {
+    getConversation, getContacts, getSettings, saveSettings,
+    getCustomAvatar, setCustomAvatar, clearCustomAvatar
+} from './state.js';
 import { fetchModels, isExtraLLMConfigured, isImageApiConfigured } from './api.js';
 import { getActiveLorebookName } from './engine.js';
 
@@ -14,26 +17,31 @@ export function getCurrentContactId() { return currentContactId; }
 
 export function filterVisibleText(text) {
     if (!text) return '';
-    return text.split('\n').filter(line => {
-        const l = line.trim().toLowerCase();
-        if (!l) return true;
-        return !(
-            l.startsWith('event:') ||
-            l.startsWith('time:') ||
-            l.startsWith('npc:') ||
-            l.startsWith('location:') ||
-            l.startsWith('atmosphere:') ||
-            l.startsWith('characters:') ||
-            l.startsWith('costume:') ||
-            l.startsWith('affection:') ||
-            l.startsWith('character:') ||
-            l.startsWith('race:') ||
-            l.startsWith('occupation:') ||
-            l.startsWith('gender:') ||
-            l.startsWith('age:') ||
-            (/^[a-z_]+:/.test(l) && l.includes('|'))
-        );
-    }).join('\n').trim();
+    return String(text)
+        .replace(/<horae>\s*<\/horae>/gi, '')
+        .replace(/<horaeevent>\s*<\/horaeevent>/gi, '')
+        .replace(/<horae>[\s\S]*?<\/horae>/gi, '')
+        .replace(/<horaeevent>[\s\S]*?<\/horaeevent>/gi, '')
+        .split('\n').filter(line => {
+            const l = line.trim().toLowerCase();
+            if (!l) return true;
+            return !(
+                l.startsWith('event:') ||
+                l.startsWith('time:') ||
+                l.startsWith('npc:') ||
+                l.startsWith('location:') ||
+                l.startsWith('atmosphere:') ||
+                l.startsWith('characters:') ||
+                l.startsWith('costume:') ||
+                l.startsWith('affection:') ||
+                l.startsWith('character:') ||
+                l.startsWith('race:') ||
+                l.startsWith('occupation:') ||
+                l.startsWith('gender:') ||
+                l.startsWith('age:') ||
+                (/^[a-z_]+:/.test(l) && l.includes('|'))
+            );
+        }).join('\n').trim();
 }
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -54,9 +62,16 @@ function avatarHTML(contact, size = 44) {
     </div>`;
 }
 
-// ═══════════════════════════════════════════════
-// СПИСОК КОНТАКТОВ
-// ═══════════════════════════════════════════════
+function imageBubbleHTML(msg) {
+    const caption = filterVisibleText(msg.caption || msg.text || '');
+    return `
+        <div class="pmsg-image-wrap">
+            <img class="pmsg-image" src="${esc(msg.imageUrl)}" alt="${esc(caption || 'Фото')}" loading="lazy">
+            ${caption ? `<div class="pmsg-image-caption">${esc(caption)}</div>` : ''}
+        </div>
+    `;
+}
+
 export function renderContactList(contacts) {
     const activeLb = getActiveLorebookName();
     const lbInfo = activeLb
@@ -105,7 +120,9 @@ export function renderContactList(contacts) {
 function getLastMessagePreview(npcId) {
     const conv = getConversation(npcId);
     if (!conv.length) return 'Нет сообщений';
-    const text = filterVisibleText(conv[conv.length - 1].text || '');
+    const last = conv[conv.length - 1];
+    if (last.type === 'image') return '📷 Фото';
+    const text = filterVisibleText(last.text || '');
     return text.slice(0, 35) + (text.length > 35 ? '…' : '');
 }
 
@@ -114,9 +131,6 @@ function getLastTime(npcId) {
     return conv.length ? conv[conv.length - 1].time : '';
 }
 
-// ═══════════════════════════════════════════════
-// ЧАТ
-// ═══════════════════════════════════════════════
 export function renderChat(contacts, npcId) {
     const contact = contacts.find(c => c.id === npcId);
     if (!contact) return '<div class="pmsg-empty">Контакт не найден</div>';
@@ -127,22 +141,37 @@ export function renderChat(contacts, npcId) {
 
     const bubbles = messages.map(m => {
         const isMe = m.sender === userName;
-        const visibleText = filterVisibleText(m.text || '');
-        if (!visibleText) return '';
+        let inner = '';
+
+        if (m.type === 'image' && m.imageUrl) {
+            inner = imageBubbleHTML(m);
+        } else {
+            const visibleText = filterVisibleText(m.text || '');
+            if (!visibleText) return '';
+            inner = `<div class="pmsg-bubble ${isMe ? 'pmsg-bubble-me' : 'pmsg-bubble-them'}">${esc(visibleText)}</div>`;
+        }
+
         return `<div class="pmsg-bubble-wrap ${isMe ? 'pmsg-me' : 'pmsg-them'}">
             ${!isMe ? avatarHTML(contact, 28) : ''}
             <div class="pmsg-msg-content">
-                <div class="pmsg-bubble ${isMe ? 'pmsg-bubble-me' : 'pmsg-bubble-them'}">${esc(visibleText)}</div>
+                ${inner}
                 <div class="pmsg-time">${esc(m.time)}</div>
             </div>
         </div>`;
     }).filter(Boolean).join('');
+
+    const customAvatar = getCustomAvatar(contact.id);
 
     return `
         <div class="pmsg-header">
             <button class="pmsg-back" data-action="back-to-list">‹</button>
             ${avatarHTML(contact, 32)}
             <div class="pmsg-header-name">${esc(contact.name)}</div>
+            <label class="pmsg-settings-btn" title="Загрузить аватар" style="cursor:pointer;">
+                🖼
+                <input type="file" accept="image/*" data-avatar-upload="${esc(contact.id)}" style="display:none">
+            </label>
+            ${customAvatar ? `<button class="pmsg-settings-btn" data-action="clear-avatar" data-id="${esc(contact.id)}" title="Сбросить аватар">✕</button>` : ''}
         </div>
         <div class="pmsg-messages" id="pmsg-messages">
             ${bubbles || '<div class="pmsg-empty-chat">Нет сообщений</div>'}
@@ -162,6 +191,7 @@ export function renderChat(contacts, npcId) {
 export function bindChatEvents(contact, onSend) {
     const sendBtn = document.getElementById('pmsg-send-btn');
     const input = document.getElementById('pmsg-input');
+    const avatarInput = document.querySelector(`[data-avatar-upload="${contact.id}"]`);
 
     if (sendBtn && input) {
         const doSend = () => {
@@ -176,6 +206,24 @@ export function bindChatEvents(contact, onSend) {
         };
     }
 
+    if (avatarInput) {
+        avatarInput.onchange = async (e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                setCustomAvatar(contact.id, String(reader.result || ''));
+                const screen = document.getElementById('phonemsg-screen');
+                if (screen) {
+                    const contacts = getContacts();
+                    screen.innerHTML = renderChat(contacts, contact.id);
+                    bindChatEvents(contact, onSend);
+                }
+            };
+            reader.readAsDataURL(file);
+        };
+    }
+
     const msgs = document.getElementById('pmsg-messages');
     if (msgs) requestAnimationFrame(() => { msgs.scrollTop = msgs.scrollHeight; });
 }
@@ -184,18 +232,26 @@ export function appendBubble(npcId, msg, userName) {
     const msgs = document.getElementById('pmsg-messages');
     if (!msgs) return;
     const isMe = msg.sender === userName;
-    const visibleText = filterVisibleText(msg.text || '');
-    if (!visibleText) return;
 
     const contacts = getContacts();
     const contact = contacts.find(c => c.id === npcId);
 
     const div = document.createElement('div');
     div.className = `pmsg-bubble-wrap ${isMe ? 'pmsg-me' : 'pmsg-them'}`;
+
+    let inner = '';
+    if (msg.type === 'image' && msg.imageUrl) {
+        inner = imageBubbleHTML(msg);
+    } else {
+        const visibleText = filterVisibleText(msg.text || '');
+        if (!visibleText) return;
+        inner = `<div class="pmsg-bubble ${isMe ? 'pmsg-bubble-me' : 'pmsg-bubble-them'}">${esc(visibleText)}</div>`;
+    }
+
     div.innerHTML = `
         ${!isMe && contact ? avatarHTML(contact, 28) : ''}
         <div class="pmsg-msg-content">
-            <div class="pmsg-bubble ${isMe ? 'pmsg-bubble-me' : 'pmsg-bubble-them'}">${esc(visibleText)}</div>
+            ${inner}
             <div class="pmsg-time">${esc(msg.time)}</div>
         </div>
     `;
@@ -220,9 +276,6 @@ export function hideTyping() {
     document.getElementById('pmsg-typing')?.remove();
 }
 
-// ═══════════════════════════════════════════════
-// НАСТРОЙКИ (встроенные в телефон через ⚙)
-// ═══════════════════════════════════════════════
 export function renderSettings() {
     const s = getSettings();
     const llmStatus = isExtraLLMConfigured()
@@ -255,7 +308,6 @@ export function renderSettings() {
             <div class="pmsg-header-name">Настройки</div>
         </div>
         <div class="pmsg-settings-body">
-
             <h3 class="pmsg-set-section">Отображение</h3>
             <label class="pmsg-set-field">
                 <span>Режим</span>
@@ -289,24 +341,6 @@ export function renderSettings() {
                     Включить двунаправленный мост
                 </span>
             </label>
-            <div class="pmsg-hint">
-                Вся твоя переписка в телефоне (в обе стороны) автоматически инжектится в промпт основного бота — он знает что происходит.
-                Маркеры "ты отправил смс" добавляются в чат ST, но скрыты от тебя.
-                Бот может писать в телефон через <code>[${esc(s.bridgeIncomingTag)}:Имя]</code> — тег превратится в заметку.
-                Добавлять контакты через <code>[${esc(s.bridgeContactTag)}:Имя:ID]</code>.
-            </div>
-            <label class="pmsg-set-field">
-                <span>Тег для входящих смс</span>
-                <input type="text" class="pmsg-input" data-set="bridgeIncomingTag" value="${esc(s.bridgeIncomingTag)}">
-            </label>
-            <label class="pmsg-set-field">
-                <span>Тег для контактов</span>
-                <input type="text" class="pmsg-input" data-set="bridgeContactTag" value="${esc(s.bridgeContactTag)}">
-            </label>
-            <label class="pmsg-set-field">
-                <span>Заметка вместо тега в чате</span>
-                <input type="text" class="pmsg-input" data-set="bridgeReplaceNote" value="${esc(s.bridgeReplaceNote)}">
-            </label>
 
             <h3 class="pmsg-set-section">API для ответов НПС ${llmStatus}</h3>
             <label class="pmsg-set-field">
@@ -329,18 +363,8 @@ export function renderSettings() {
                 <span>Модель</span>
                 ${llmModelOptions}
             </label>
-            <div class="pmsg-set-row">
-                <label class="pmsg-set-field" style="flex:1">
-                    <span>Temperature</span>
-                    <input type="number" step="0.1" min="0" max="2" class="pmsg-input" data-set-deep="extraApi.temperature" value="${s.extraApi.temperature}">
-                </label>
-                <label class="pmsg-set-field" style="flex:1">
-                    <span>Max tokens</span>
-                    <input type="number" step="50" min="50" max="8000" class="pmsg-input" data-set-deep="extraApi.maxTokens" value="${s.extraApi.maxTokens}">
-                </label>
-            </div>
 
-            <h3 class="pmsg-set-section">Image API (аватары) ${imgStatus}</h3>
+            <h3 class="pmsg-set-section">Image API (аватары и фото) ${imgStatus}</h3>
             <label class="pmsg-set-field">
                 <span class="pmsg-checkbox-field">
                     <input type="checkbox" data-set="useSillyImagesConfig" ${s.useSillyImagesConfig ? 'checked' : ''}>
@@ -380,24 +404,6 @@ export function renderSettings() {
                 <span>Negative prompt</span>
                 <textarea class="pmsg-input" data-set="imageNegativePrompt" rows="2">${esc(s.imageNegativePrompt)}</textarea>
             </label>
-
-            <h3 class="pmsg-set-section">Автосообщения</h3>
-            <label class="pmsg-set-field">
-                <span class="pmsg-checkbox-field">
-                    <input type="checkbox" data-set="autoMessagesEnabled" ${s.autoMessagesEnabled ? 'checked' : ''}>
-                    НПС сами пишут первыми после паузы
-                </span>
-            </label>
-            <div class="pmsg-set-row">
-                <label class="pmsg-set-field" style="flex:1">
-                    <span>Молчание (мин)</span>
-                    <input type="number" class="pmsg-input" data-set="autoMessageSilenceMin" value="${s.autoMessageSilenceMin}" min="5">
-                </label>
-                <label class="pmsg-set-field" style="flex:1">
-                    <span>Кулдаун (мин)</span>
-                    <input type="number" class="pmsg-input" data-set="autoMessageCooldownMin" value="${s.autoMessageCooldownMin}" min="10">
-                </label>
-            </div>
 
             <h3 class="pmsg-set-section">Опасная зона</h3>
             <button class="pmsg-btn pmsg-danger" data-action="reset-chat">Сбросить переписки в этом чате</button>
