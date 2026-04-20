@@ -10,18 +10,13 @@ import { callExtraLLM, isExtraLLMConfigured, generateImage, isImageApiConfigured
 const LOG = '[PhoneMSG-Engine]';
 const ctx = () => (typeof SillyTavern?.getContext === 'function' ? SillyTavern.getContext() : null);
 
-// ═══════════════════════════════════════════════
-// АВТООПРЕДЕЛЕНИЕ ЛОРБУКА
-// ═══════════════════════════════════════════════
 export function getActiveLorebookName() {
     const s = getSettings();
     if (s.lorebookSource === 'named' && s.lorebookName) return s.lorebookName;
 
-    // 1) привязанный к чату
     const chatLb = chat_metadata?.['world_info'];
     if (chatLb) return chatLb;
 
-    // 2) primary из карточки персонажа
     try {
         const c = ctx();
         const charId = c?.characterId;
@@ -30,7 +25,7 @@ export function getActiveLorebookName() {
             const charLb = chars[charId]?.data?.extensions?.world;
             if (charLb) return charLb;
         }
-    } catch { /* ignore */ }
+    } catch {}
 
     if (s.lorebookName) return s.lorebookName;
     return null;
@@ -47,9 +42,6 @@ async function loadWorldInfoSafe(name) {
     }
 }
 
-// ═══════════════════════════════════════════════
-// ЗАГРУЗКА КОНТАКТОВ (лорбук + динамические из чата)
-// ═══════════════════════════════════════════════
 export async function loadAllContacts() {
     const lbContacts = await loadContactsFromLorebook();
     const dynamicContacts = getDynamicContacts();
@@ -96,7 +88,7 @@ async function loadContactsFromLorebook() {
         try {
             const trimmed = String(entry.content || '').trim();
             if (trimmed.startsWith('{')) data2 = JSON.parse(trimmed);
-        } catch { /* не JSON */ }
+        } catch {}
 
         let name, description, avatar = null, color = '#007AFF', id;
         if (data2) {
@@ -118,43 +110,66 @@ async function loadContactsFromLorebook() {
     return contacts;
 }
 
-// ═══════════════════════════════════════════════
-// ФИЛЬТРАЦИЯ служебных строк в ответах НПС
-// ═══════════════════════════════════════════════
 function stripServiceLines(text) {
     if (!text) return '';
-    return text.split('\n').filter(line => {
-        const l = line.trim().toLowerCase();
-        if (!l) return true;
-        return !(
-            l.startsWith('event:') ||
-            l.startsWith('time:') ||
-            l.startsWith('npc:') ||
-            l.startsWith('location:') ||
-            l.startsWith('atmosphere:') ||
-            l.startsWith('characters:') ||
-            l.startsWith('costume:') ||
-            l.startsWith('affection:') ||
-            l.startsWith('character:') ||
-            l.startsWith('race:') ||
-            l.startsWith('occupation:') ||
-            l.startsWith('gender:') ||
-            l.startsWith('age:') ||
-            (/^[a-z_]+:/.test(l) && l.includes('|'))
-        );
-    }).join('\n').trim();
+    return String(text)
+        .replace(/<horae>\s*<\/horae>/gi, '')
+        .replace(/<horaeevent>\s*<\/horaeevent>/gi, '')
+        .replace(/<horae>[\s\S]*?<\/horae>/gi, '')
+        .replace(/<horaeevent>[\s\S]*?<\/horaeevent>/gi, '')
+        .split('\n')
+        .filter(line => {
+            const l = line.trim().toLowerCase();
+            if (!l) return true;
+            return !(
+                l.startsWith('event:') ||
+                l.startsWith('time:') ||
+                l.startsWith('npc:') ||
+                l.startsWith('location:') ||
+                l.startsWith('atmosphere:') ||
+                l.startsWith('characters:') ||
+                l.startsWith('costume:') ||
+                l.startsWith('affection:') ||
+                l.startsWith('character:') ||
+                l.startsWith('race:') ||
+                l.startsWith('occupation:') ||
+                l.startsWith('gender:') ||
+                l.startsWith('age:') ||
+                (/^[a-z_]+:/.test(l) && l.includes('|'))
+            );
+        })
+        .join('\n')
+        .trim();
 }
 
-// ═══════════════════════════════════════════════
-// ГЕНЕРАЦИЯ ОТВЕТА НПС
-// ═══════════════════════════════════════════════
+function looksLikeImageRequest(text) {
+    const t = String(text || '').toLowerCase();
+    return (
+        t.includes('скинь фот') ||
+        t.includes('пришли фот') ||
+        t.includes('отправь фот') ||
+        t.includes('покажи себя') ||
+        t.includes('селфи') ||
+        t.includes('скинь пик') ||
+        t.includes('send photo') ||
+        t.includes('send pic') ||
+        t.includes('send selfie')
+    );
+}
+
+function summarizeImagePrompt(text) {
+    const clean = stripServiceLines(text).replace(/\s+/g, ' ').trim();
+    if (!clean) return 'фото';
+    return clean.slice(0, 120);
+}
+
 export async function generateNPCReply(contact, userMessage) {
     const c = ctx();
-    if (!c) return '...';
+    if (!c) return { type: 'text', text: '...' };
+
     const s = getSettings();
     const userName = c.name1 || 'User';
 
-    // Фильтруем маркеры нашего моста из контекста — чтобы НПС не видел "ты отправил смс"
     const chatHistory = (c.chat || [])
         .slice(-30)
         .filter(m => !m.extra?.phonemsg_marker)
@@ -166,7 +181,13 @@ export async function generateNPCReply(contact, userMessage) {
 
     const phoneHistory = getConversation(contact.id)
         .slice(-20)
-        .map(m => `${m.sender === userName ? userName : contact.name}: ${m.text}`)
+        .map(m => {
+            if (m.type === 'image') {
+                const desc = m.injectText || m.caption || 'фото';
+                return `${m.sender === userName ? userName : contact.name}: [отправил(а) фото: ${desc}]`;
+            }
+            return `${m.sender === userName ? userName : contact.name}: ${m.text}`;
+        })
         .join('\n');
 
     const meta = getNpcMeta(contact.id);
@@ -187,6 +208,7 @@ ${chatHistory || 'Контекст ещё отсутствует.'}
 - Пиши ТОЛЬКО текст смс
 - Без звёздочек, нарратива, метакомментариев
 - НИКОГДА не пиши служебные строки "event:", "time:", "npc:", "location:"
+- Если пользователь просит фото/селфи/картинку, ответь КОРОТКИМ описанием того, что должно быть на фото, без пояснений и без имени персонажа
 - Язык и стиль соответствуют сеттингу`;
 
     const userPrompt = phoneHistory
@@ -201,11 +223,11 @@ ${chatHistory || 'Контекст ещё отсутствует.'}
         if (!s.useMainApi && isExtraLLMConfigured()) {
             reply = await callExtraLLM(finalUser, { system: finalSystem });
         } else {
-            reply = await c.generateRaw({ prompt: finalUser, system: finalSystem });
+            reply = await c.generateRaw({ prompt: finalUser, systemPrompt: finalSystem });
         }
     } catch (err) {
         console.error(LOG, 'Генерация не удалась:', err);
-        return '...';
+        return { type: 'text', text: '...' };
     }
 
     let clean = String(reply || '')
@@ -217,12 +239,29 @@ ${chatHistory || 'Контекст ещё отсутствует.'}
 
     clean = stripServiceLines(clean);
     updateNpcMeta(contact.id, { lastSeen: Date.now() });
-    return clean || '...';
+
+    if (looksLikeImageRequest(userMessage) && isImageApiConfigured()) {
+        try {
+            const imagePrompt = `${contact.name}, ${contact.description}. ${clean || 'casual candid phone photo'}`;
+            const imageUrl = await generateImage(imagePrompt);
+            return {
+                type: 'image',
+                text: '',
+                imageUrl,
+                caption: clean || 'Фото',
+                injectText: summarizeImagePrompt(clean || 'Фото'),
+            };
+        } catch (e) {
+            console.warn(LOG, 'generateImage failed, fallback to text:', e);
+        }
+    }
+
+    return {
+        type: 'text',
+        text: clean || '...',
+    };
 }
 
-// ═══════════════════════════════════════════════
-// АВТОСООБЩЕНИЯ
-// ═══════════════════════════════════════════════
 let _autoMessageCallback = null;
 let _schedulerInterval = null;
 
