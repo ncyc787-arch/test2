@@ -13,9 +13,11 @@ const DEFAULT_SETTINGS = {
     lorebookName: '',
     displayMode: 'floating',
     fabPosition: { right: 20, top: null },
+
     autoMessagesEnabled: true,
     autoMessageSilenceMin: 30,
     autoMessageCooldownMin: 60,
+
     useMainApi: true,
     extraApi: {
         endpoint: '',
@@ -24,18 +26,28 @@ const DEFAULT_SETTINGS = {
         temperature: 0.9,
         maxTokens: 800,
     },
+
+    // ВАЖНО: тут сразу добавлены поля для openai и gemini/bananа
     imageApi: {
         endpoint: '',
         apiKey: '',
         model: '',
         size: '1024x1024',
-        apiType: 'openai',
+        apiType: 'openai',     // 'openai' | 'gemini' | 'naistera' и т.п.
+        aspectRatio: '1:1',    // для gemini/bananа
+        imageSize: '1K',       // для gemini/bananа
+        quality: 'standard',   // для openai-совместимых (standard / hd)
+        preset: 'digital',     // на будущее (например, Naistera)
     },
+
     useSillyImagesConfig: true,
+
     imagePromptPrefix: 'photorealistic portrait, natural lighting, sharp focus',
     imagePromptSuffix: '',
     imageNegativePrompt: 'cartoon, anime, deformed, blurry, low quality, watermark',
+
     avatars: {},
+
     bridgeEnabled: true,
     bridgeIncomingTag: 'телефон',
     bridgeContactTag: 'контакт',
@@ -47,27 +59,57 @@ export function getSettings() {
         extension_settings[EXT_NAME] = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
     }
     const s = extension_settings[EXT_NAME];
+
+    // добиваем отсутствующие ключи верхнего уровня
     for (const k of Object.keys(DEFAULT_SETTINGS)) {
-        if (s[k] === undefined) s[k] = JSON.parse(JSON.stringify(DEFAULT_SETTINGS[k]));
+        if (s[k] === undefined) {
+            s[k] = JSON.parse(JSON.stringify(DEFAULT_SETTINGS[k]));
+        }
     }
+
+    // extraApi
     if (!s.extraApi) s.extraApi = { ...DEFAULT_SETTINGS.extraApi };
+    else {
+        for (const k of Object.keys(DEFAULT_SETTINGS.extraApi)) {
+            if (s.extraApi[k] === undefined) s.extraApi[k] = DEFAULT_SETTINGS.extraApi[k];
+        }
+    }
+
+    // imageApi (добавляем новые поля, чтобы старые конфиги не ломались)
     if (!s.imageApi) s.imageApi = { ...DEFAULT_SETTINGS.imageApi };
+    else {
+        for (const k of Object.keys(DEFAULT_SETTINGS.imageApi)) {
+            if (s.imageApi[k] === undefined) s.imageApi[k] = DEFAULT_SETTINGS.imageApi[k];
+        }
+    }
+
     if (!s.avatars) s.avatars = {};
+
     return s;
 }
 
 export function saveSettings() {
-    try { saveSettingsDebounced(); } catch (e) { console.warn('[PhoneMSG] saveSettings:', e); }
+    try {
+        saveSettingsDebounced();
+    } catch (e) {
+        console.warn('[PhoneMSG] saveSettings:', e);
+    }
 }
 
 function ctx() {
-    try { return typeof SillyTavern?.getContext === 'function' ? SillyTavern.getContext() : null; }
-    catch { return null; }
+    try {
+        return typeof SillyTavern?.getContext === 'function'
+            ? SillyTavern.getContext()
+            : null;
+    } catch {
+        return null;
+    }
 }
 
 export function getState() {
     const c = ctx();
     const meta = c?.chatMetadata || chat_metadata;
+
     if (!meta[MODULE]) {
         meta[MODULE] = {
             conversations: {},
@@ -75,9 +117,11 @@ export function getState() {
             dynamicContacts: {},
         };
     }
+
     if (!meta[MODULE].dynamicContacts) meta[MODULE].dynamicContacts = {};
     if (!meta[MODULE].npcMeta) meta[MODULE].npcMeta = {};
     if (!meta[MODULE].conversations) meta[MODULE].conversations = {};
+
     return meta[MODULE];
 }
 
@@ -86,6 +130,7 @@ export function saveState() {
     if (c?.saveMetadata) c.saveMetadata();
 }
 
+// Скрываем служебные теги horae/horaeevent, чтобы в телефоне их не было
 function stripPhoneServiceTags(text) {
     if (!text) return '';
     return String(text)
@@ -100,8 +145,8 @@ function stripPhoneServiceTags(text) {
 export function addMessage(npcId, sender, text, extra = {}) {
     const state = getState();
     if (!state.conversations[npcId]) state.conversations[npcId] = [];
-    const now = Date.now();
 
+    const now = Date.now();
     const type = extra.type || 'text';
     const cleanText = stripPhoneServiceTags(text);
 
@@ -109,7 +154,10 @@ export function addMessage(npcId, sender, text, extra = {}) {
         sender,
         text: cleanText,
         ts: now,
-        time: new Date(now).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+        time: new Date(now).toLocaleTimeString('ru-RU', {
+            hour: '2-digit',
+            minute: '2-digit',
+        }),
         type,
         imageUrl: extra.imageUrl || null,
         caption: stripPhoneServiceTags(extra.caption || ''),
@@ -150,7 +198,13 @@ export function getDynamicContacts() {
 export function getNpcMeta(npcId) {
     const state = getState();
     if (!state.npcMeta) state.npcMeta = {};
-    if (!state.npcMeta[npcId]) state.npcMeta[npcId] = { affection: 50, lastSeen: null, cooldown: null };
+    if (!state.npcMeta[npcId]) {
+        state.npcMeta[npcId] = {
+            affection: 50,
+            lastSeen: null,
+            cooldown: null,
+        };
+    }
     return state.npcMeta[npcId];
 }
 
