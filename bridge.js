@@ -1,24 +1,8 @@
 // bridge.js — двунаправленный мост между телефоном и основным чатом
-//
-// ЧТО ОН ДЕЛАЕТ:
-//
-// 1) ПОЛНЫЙ ИНЖЕКТ ВСЕЙ ПЕРЕПИСКИ через setExtensionPrompt:
-//    Формат: [📱 Юзер → Аякс]: ... / [📱 Аякс → Юзер]: ...
-//    LLM видит полную картину всех смс (твоих И ответов НПС).
-//    Обновляется после КАЖДОГО сообщения (и твоего, и НПС).
-//    В UI чата НЕ ВИДНО — это просто system prompt для модели.
-//
-// 2) МАРКЕРЫ ОТПРАВКИ в c.chat[] (скрытые через CSS):
-//    При отправке юзером → добавляется system msg с extra.phonemsg_marker
-//    Это важно чтобы бот понимал "вот прямо сейчас юзер нажал send".
-//    Скрываются через CSS-класс .phonemsg-hidden.
-//
-// 3) ПАРСИНГ ВХОДЯЩИХ тегов [телефон:Имя] и [контакт:Имя:ID]:
-//    Сохраняет сообщение в переписку, заменяет тег на заметку в видимом тексте.
 
 import {
     getSettings, addMessage, addDynamicContact, getDynamicContacts,
-    getContacts, getNpcMeta, updateNpcMeta, getConversation
+    getContacts, updateNpcMeta, getConversation
 } from './state.js';
 
 const LOG = '[PhoneMSG-Bridge]';
@@ -27,14 +11,6 @@ const INJECT_DEPTH = 1;
 
 const ctx = () => (typeof SillyTavern?.getContext === 'function' ? SillyTavern.getContext() : null);
 
-// ═══════════════════════════════════════════════
-// 1. ИНЖЕКТ ВСЕЙ ПЕРЕПИСКИ (для LLM, не видно в чате)
-// ═══════════════════════════════════════════════
-
-/**
- * Собирает полную историю всех переписок телефона и кладёт в extensionPrompt.
- * Вызывается ПОСЛЕ каждого сообщения (и юзера, и НПС) и при загрузке чата.
- */
 export function rebuildConversationsInject() {
     const s = getSettings();
     const c = ctx();
@@ -61,16 +37,20 @@ export function rebuildConversationsInject() {
         hasAnyMessages = true;
 
         for (const m of conv.slice(-25)) {
-            // Определяем направление:
-            //   - от юзера → контакту
-            //   - от контакта (НПС) → юзеру
             const isFromUser = m.sender === userName;
             const fromLabel = isFromUser ? userName : contact.name;
             const toLabel = isFromUser ? contact.name : userName;
             const timeStr = m.time || '';
-            lines.push(`[📱 ${fromLabel} → ${toLabel} в смс${timeStr ? ', ' + timeStr : ''}]: ${m.text}`);
+
+            let payload = m.text || '';
+            if (m.type === 'image') {
+                const desc = m.injectText || m.caption || 'фото';
+                payload = `[отправил(а) фото: ${desc}]`;
+            }
+
+            lines.push(`[📱 ${fromLabel} → ${toLabel} в смс${timeStr ? ', ' + timeStr : ''}]: ${payload}`);
         }
-        lines.push(''); // разделитель между контактами
+        lines.push('');
     }
 
     if (!hasAnyMessages) {
@@ -91,15 +71,6 @@ export function rebuildConversationsInject() {
     console.log(LOG, `инжект обновлён: ${lines.filter(l => l).length} строк`);
 }
 
-// ═══════════════════════════════════════════════
-// 2. МАРКЕР ОТПРАВКИ (скрытый system msg в c.chat[])
-// ═══════════════════════════════════════════════
-
-/**
- * Добавляет невидимое system-сообщение в c.chat[] при отправке смс юзером.
- * Бот получает свежий сигнал "юзер прямо сейчас отправил смс".
- * В UI не видно благодаря CSS-классу .phonemsg-hidden.
- */
 export async function pushOutgoingSystemMarker(contact, text) {
     const s = getSettings();
     if (!s.bridgeEnabled) return;
@@ -144,10 +115,6 @@ export async function pushOutgoingSystemMarker(contact, text) {
     }
 }
 
-// ═══════════════════════════════════════════════
-// 3. ПАРСИНГ ВХОДЯЩИХ ТЕГОВ
-// ═══════════════════════════════════════════════
-
 export function parseBotMessage(originalText) {
     const s = getSettings();
     if (!s.bridgeEnabled || !originalText) {
@@ -162,7 +129,6 @@ export function parseBotMessage(originalText) {
     const newContacts = [];
     let newText = originalText;
 
-    // Паттерн: [контакт:Имя:ID] или [контакт:Имя]
     const contactRe = new RegExp(`\\[${contactTag}:([^:\\]]+?)(?::([^\\]]+?))?\\]`, 'gi');
     newText = newText.replace(contactRe, (match, name, id) => {
         const cleanName = (name || '').trim();
@@ -172,7 +138,6 @@ export function parseBotMessage(originalText) {
         return '';
     });
 
-    // Паттерн: [телефон:Имя] текст до следующего тега или конца
     const phoneRe = new RegExp(
         `\\[${phoneTag}:\\s*([^\\]]+?)\\]\\s*([\\s\\S]*?)(?=\\n\\s*\\[${phoneTag}:|\\n\\s*\\[${contactTag}:|$)`,
         'gi'
@@ -216,13 +181,11 @@ export async function processBotMessage(messageIndex) {
             color: randomColor(nc.name),
             source: 'chat',
         });
-        console.log(LOG, `новый контакт из чата: ${nc.name} (${nc.id})`);
     }
 
     for (const pm of parsed.phoneMessages) {
         addMessage(pm.contactId, pm.contactName, pm.text);
         updateNpcMeta(pm.contactId, { lastSeen: Date.now() });
-        console.log(LOG, `входящее смс от ${pm.contactName}:`, pm.text.slice(0, 50));
     }
 
     msg.mes = parsed.newText;
@@ -232,13 +195,6 @@ export async function processBotMessage(messageIndex) {
     try {
         if (typeof c.updateMessageBlock === 'function') {
             c.updateMessageBlock(messageIndex, msg);
-        } else {
-            const mesBlock = document.querySelector(`.mes[mesid="${messageIndex}"] .mes_text`);
-            if (mesBlock) {
-                mesBlock.innerHTML = c.messageFormatting
-                    ? c.messageFormatting(msg.mes, msg.name, false, false, messageIndex)
-                    : msg.mes;
-            }
         }
     } catch (e) {
         console.warn(LOG, 'updateMessageBlock failed:', e);
@@ -246,7 +202,7 @@ export async function processBotMessage(messageIndex) {
 
     try {
         if (typeof c.saveChatConditional === 'function') await c.saveChatConditional();
-    } catch { /* ignore */ }
+    } catch {}
 
     return parsed.phoneMessages.length > 0 || parsed.newContacts.length > 0;
 }
@@ -264,10 +220,6 @@ export async function processExistingChat() {
     hideMarkersInDOM();
 }
 
-// ═══════════════════════════════════════════════
-// 4. СКРЫТИЕ МАРКЕРОВ В DOM
-// ═══════════════════════════════════════════════
-
 export function hideMarkersInDOM() {
     const c = ctx();
     if (!c || !c.chat) return;
@@ -282,9 +234,6 @@ export function hideMarkersInDOM() {
     });
 }
 
-// ═══════════════════════════════════════════════
-// Helpers
-// ═══════════════════════════════════════════════
 function escapeRegex(s) {
     return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
