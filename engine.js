@@ -1,400 +1,502 @@
-// engine.js — логика генерации НПС для PhoneMSG
-// Картинки: НПС пишет [IMG:english photo description], генерация идёт в фоне как в Spark
+// ═══════════════════════════════════════════
+// ENGINE — генерация ответов + синк с основным чатом ST
+// ═══════════════════════════════════════════
 
-import { chat_metadata } from '../../../../script.js';
-import {
-    addMessage, getConversation, getContacts, getNpcMeta, updateNpcMeta,
-    getSettings, getDynamicContacts, saveState
-} from './state.js';
-import { callExtraLLM, isExtraLLMConfigured, generateImageWithFallback } from './api.js';
+import { setExtensionPrompt, extension_prompt_types } from '../../../../script.js';
+import { loadState, pushMessage, updateMessage, getSettings, save } from './state.js';
+import { callExtraLLM, isExtraLLMConfigured, generateImageWithFallback, isImageApiConfigured, generateImageViaSD } from './api.js';
 
-const LOG = '[PhoneMSG-Engine]';
-const ctx = () => (typeof SillyTavern?.getContext === 'function' ? SillyTavern.getContext() : null);
+const PROMPT_KEY = 'IMESSAGE_EXT';
 
-export function getActiveLorebookName() {
-    const s = getSettings();
-    if (s.lorebookSource === 'named' && s.lorebookName) return s.lorebookName;
+// ── Парсинг РП-действий бота: извлечь ТОЛЬКО текст сообщений ──
+// Удаляет: «Написал в телефон:», «*отправил*», «[action]», кавычки-обёртки и т.п.
+// Возвращает массив { text?, image?, deleted? }
+export function parseRpMessage(raw) {
+    if (!raw) return [];
+    let text = String(raw);
 
-    const chatLb = chat_metadata?.['world_info'];
-    if (chatLb) return chatLb;
+    // Убираем <think>
+    text = text.replace(/<(think|thinking|reasoning|analysis)[^>]*>[\s\S]*?<\/\1>/gi, '');
+    text = text.replace(/```(?:think|thinking)[\s\S]*?```/gi, '');
 
-    try {
-        const c = ctx();
-        const charId = c?.characterId;
-        const chars = c?.characters;
-        if (chars && charId != null) {
-            const charLb = chars[charId]?.data?.extensions?.world;
-            if (charLb) return charLb;
+    // Детектим паттерны «написал/напечатал/отправил ... в телефон/сообщение»
+    // Если такая фраза есть — пытаемся вычленить только ТЕКСТ сообщения
+    const phonePatterns = [
+        // «написал(а) в телефон: "текст"»
+        /(?:написал[аи]?|напечатал[аи]?|отправил[аи]?|прислал[аи]?|скинул[аи]?)[\s\S]{0,80}(?:в телефон|сообщение|смс|мессенджер)[^\n:]*[:\n]\s*[«""]?([\s\S]+?)[»""']?\s*$/im,
+        // «*написал в телефон* "текст"»
+        /\*(?:написал[аи]?|отправил[аи]?|напечатал[аи]?)[\s\S]{0,60}?\*[:\s]*[«""]?([\s\S]+?)[»""']?\s*$/im,
+        // «[отправил сообщение]: текст»
+        /\[(?:написал[аи]?|отправил[аи]?|напечатал[аи]?|прислал[аи]?)[^\]]*\][:\s]*[«""]?([\s\S]+?)[»""']?\s*$/im,
+    ];
+    for (const re of phonePatterns) {
+        const m = text.match(re);
+        if (m && m[1]) {
+            text = m[1].trim();
+            break;
         }
-    } catch {}
-
-    if (s.lorebookName) return s.lorebookName;
-    return null;
-}
-
-async function loadWorldInfoSafe(name) {
-    if (!name) return null;
-    try {
-        const wi = await import('../../../world-info.js');
-        return await wi.loadWorldInfo(name);
-    } catch (e) {
-        console.error(LOG, 'loadWorldInfo failed:', e);
-        return null;
-    }
-}
-
-export async function loadAllContacts() {
-    const lbContacts = await loadContactsFromLorebook();
-    const dynamicContacts = getDynamicContacts();
-
-    const byId = new Map();
-    for (const c of lbContacts) byId.set(c.id, c);
-    for (const c of dynamicContacts) {
-        if (!byId.has(c.id)) byId.set(c.id, c);
     }
 
-    return Array.from(byId.values());
-}
+    // Убираем ролевые обёртки *действия* в начале/конце если они НЕ содержат текст сообщения
+    // Но оставляем если это просто эмодзи или короткое слово
+    text = text.replace(/^\*[^*]{1,120}\*\s*/gm, (match) => {
+        // если внутри звёздочек нет букв алфавита (только действие) — убираем
+        const inner = match.replace(/\*/g, '').trim();
+        if (/^[а-яёa-z\s,.!?…]{3,}$/i.test(inner) && inner.length > 30) return '';
+        return match;
+    });
 
-async function loadContactsFromLorebook() {
-    const lbName = getActiveLorebookName();
-    if (!lbName) {
-        console.warn(LOG, 'Лорбук не найден');
-        return [];
-    }
+    // Убираем «имя персонажа: » в начале
+    text = text.replace(/^[А-ЯЁA-Z][а-яёa-zA-Z\s-]{1,30}:\s*/m, '');
 
-    const data = await loadWorldInfoSafe(lbName);
-    if (!data || !data.entries) {
-        console.warn(LOG, 'Лорбук пуст:', lbName);
-        return [];
-    }
+    // Убираем служебные строки о действиях (одиночные строки без текста сообщения)
+    const lines = text.split('\n');
+    const cleanLines = lines.filter(line => {
+        const l = line.trim();
+        if (!l) return false;
+        // Строка — чистое действие-описание (нет ничего кроме *...*  или [...])
+        if (/^\*[^*]+\*$/.test(l) && l.length > 10) return false;
+        if (/^\[[^\]]+\]$/.test(l) && l.length > 10) return false;
+        // Строки типа «(удалил сообщение)», «(напечатал и стёр)»
+        if (/^\([^)]+\)$/.test(l) && /удал|стёр|написал|отправил|прочитал/i.test(l)) return false;
+        return true;
+    });
+    text = cleanLines.join('\n').trim();
 
-    const entries = Object.values(data.entries).filter(e => !e.disable);
-    const contacts = [];
+    if (!text) return [];
 
-    for (const entry of entries) {
-        const comment = (entry.comment || '').toLowerCase();
-        const keys = Array.isArray(entry.key) ? entry.key.join(' ').toLowerCase() : '';
-        const contentLower = String(entry.content || '').toLowerCase();
+    // Разбиваем на части по двойному переносу
+    const parts = text.split(/\n\n+/).map(p => p.trim()).filter(Boolean);
+    const result = [];
 
-        const isContact =
-            comment.includes('phone_contact') ||
-            comment.includes('phone:') ||
-            keys.includes('phone_contact') ||
-            /phone_contact\b/i.test(contentLower);
-
-        if (!isContact) continue;
-
-        let data2 = null;
-        try {
-            const trimmed = String(entry.content || '').trim();
-            if (trimmed.startsWith('{')) data2 = JSON.parse(trimmed);
-        } catch {}
-
-        let name, description, avatar = null, color = '#007AFF', id;
-        if (data2) {
-            id = data2.id || `lb_${entry.uid}`;
-            name = data2.name || (entry.comment || '').replace(/phone_contact/i, '').trim() || 'Unknown';
-            description = data2.description || entry.content;
-            avatar = data2.avatar || null;
-            color = data2.color || '#007AFF';
-        } else {
-            name = (entry.comment || '').replace(/phone_contact/i, '').trim() || 'Contact';
-            description = entry.content;
-            id = `lb_${entry.uid}_${name.toLowerCase().replace(/[^a-zа-я0-9]/gi, '').slice(0, 12)}`;
+    for (const part of parts) {
+        // [DELETED]текст[/DELETED] → удалённое сообщение
+        const del = part.match(/^\[DELETED\]([\s\S]+?)\[\/DELETED\]$/i);
+        if (del) {
+            result.push({ text: del[1].trim(), deleted: true });
+            continue;
         }
-
-        contacts.push({ id, name, description, avatar, color, source: 'lorebook' });
+        // [IMG:...] → картинка
+        const imgRe = /\[IMG:(GEN:)?([^\]]+)\]/gi;
+        const imgs = [...part.matchAll(imgRe)];
+        const cleanText = part.replace(imgRe, '').trim();
+        if (cleanText) result.push({ text: cleanText });
+        for (const m of imgs) {
+            let imgPrompt = m[2].trim();
+            if (m[1]) { try { const j = JSON.parse(m[2]); imgPrompt = [j.style, j.prompt].filter(Boolean).join(' ') || imgPrompt; } catch {} }
+            result.push({ image: true, _imgPrompt: imgPrompt });
+        }
     }
 
-    console.log(LOG, `Из лорбука: ${contacts.length} контактов`);
-    return contacts;
+    return result;
 }
 
-// ── Очистка <think>-тегов, служебных тегов и РП-нарратива ───────────────────
 function cleanLLMOutput(text) {
     if (!text) return '';
     let t = String(text);
-
-    // Убираем think-теги reasoning-моделей
-    t = t.replace(/<(think|thinking|reasoning|analysis|reflection)[^>]*>[\s\S]*?<\/\1>/gi, '');
-    t = t.replace(/<(think|thinking|reasoning)[^>]*>[\s\S]*?(?=\n\n|$)/gi, '');
-    t = t.replace(/```(?:think|thinking|reasoning)[\s\S]*?```/gi, '');
-
-    // Убираем horae/horaeevent
-    t = t.replace(/<horae>\s*<\/horae>/gi, '');
-    t = t.replace(/<horaeevent>\s*<\/horaeevent>/gi, '');
-    t = t.replace(/<horae>[\s\S]*?<\/horae>/gi, '');
-    t = t.replace(/<horaeevent>[\s\S]*?<\/horaeevent>/gi, '');
-
-    // Убираем теги-мосты если НПС их использует
-    t = t.replace(/\[телефон:[^\]]+\]\s*/gi, '');
-    t = t.replace(/\[контакт:[^\]]+\]\s*/gi, '');
-
-    // Убираем «Имя:» в начале если модель дублирует имя
-    t = t.replace(/^[А-ЯЁA-Z][а-яёa-zA-Z]+\s*:\s*/, '');
-
-    // Убираем DESC-теги (иногда модель пишет [DESC:...] вместо [IMG:...])
-    t = t.replace(/\[DESC\s*\]/gi, '');
-
-    // Убираем РП-нарратив — строки целиком в *звёздочках* или _подчёркиваниях_
-    // (это действия, а не SMS-текст: *Аякс уставился в экран*)
-    t = t.split('\n').filter(line => {
-        const l = line.trim();
-        if (!l) return true; // пустые строки сохраняем для разделения пузырьков
-        // Строка полностью заключена в *...* или _..._ — РП-действие, убираем
-        if (/^\*[^*]+\*$/.test(l)) return false;
-        if (/^_[^_]+_$/.test(l)) return false;
-        // Строка начинается с «Он», «Она», «Аякс» + глагол — нарратив, убираем
-        // Слишком агрессивно не делаем, только явные случаи вида "Он увеличил фото."
-        return true;
-    }).join('\n');
-
-    // Убираем строки вида *действие* внутри текста (inline RP)
-    // Оставляем только если это единственное содержимое сообщения
-    t = t.replace(/\*[^*\n]{3,80}\*/g, (match, offset, str) => {
-        // Если вся строка это *...* — уже убрали выше, здесь убираем только inline
-        const lineStart = str.lastIndexOf('\n', offset) + 1;
-        const lineEnd = str.indexOf('\n', offset);
-        const line = str.slice(lineStart, lineEnd === -1 ? str.length : lineEnd).trim();
-        // Если весь текст строки = этот match — уже обработано выше
-        if (line === match.trim()) return match;
-        // Иначе убираем inline РП
-        return '';
-    });
-
+    t = t.replace(/<(think|thinking|reasoning|analysis)[^>]*>[\s\S]*?<\/\1>/gi, '');
+    t = t.replace(/```(?:think|thinking)[\s\S]*?```/gi, '');
+    t = t.replace(/^[А-ЯЁA-Z][а-яёa-zA-Z\s-]{1,30}:\s*/m, '');
     return t.trim();
 }
 
-// ── Обновить сообщение по _genId (для async-генерации картинки) ──────────────
-function updateGeneratedImage(contactId, genId, patch) {
-    const state_mod = (typeof SillyTavern?.getContext === 'function')
-        ? SillyTavern.getContext()?.chatMetadata?.PhoneMSG
-        : null;
-
-    // Импортируем getState через динамический импорт чтобы избежать circular
-    import('./state.js').then(({ getState, saveState }) => {
-        const state = getState();
-        const list = state.conversations?.[contactId];
-        if (!list) return;
-        const msg = list.find(m => m && m._genId === genId);
-        if (!msg) return;
-        Object.assign(msg, patch);
-        saveState();
-        // Сигнализируем UI о перерендере
-        window.dispatchEvent(new CustomEvent('phonemsg:rerender', { detail: { contactId } }));
-    });
+// ── Персона пользователя ──
+function getUserPersona() {
+    try {
+        const c = (typeof SillyTavern?.getContext === 'function') ? SillyTavern.getContext() : {};
+        const name = c.name1 || 'User';
+        let description = '';
+        if (typeof c.substituteParams === 'function') {
+            const sub = c.substituteParams('{{persona}}');
+            if (sub && sub !== '{{persona}}') description = sub;
+        }
+        if (!description) {
+            const pu = c.powerUserSettings || {};
+            const { user_avatar } = /** @type {any} */(window);
+            if (pu.personas && pu.persona_descriptions && user_avatar) {
+                description = pu.persona_descriptions[user_avatar]?.description || '';
+            }
+        }
+        return { name, description: (description || '').trim() };
+    } catch { return { name: 'User', description: '' }; }
 }
 
-// ── Основная генерация ответа НПС ─────────────────────────────────────────────
-// Возвращает массив { type, text, _genId?, _generating? } — каждый элемент = пузырёк
-export async function generateNPCReply(contact, userMessage, attachedImageDataUrl = null) {
-    const c = ctx();
-    if (!c) return [{ type: 'text', text: '...' }];
 
-    const s = getSettings();
-    const userName = c.name1 || 'User';
-
-    // История основного чата (последние 30 без phonemsg-маркеров)
-    const chatHistory = (c.chat || [])
-        .slice(-30)
-        .filter(m => !m.extra?.phonemsg_marker)
-        .map(m => `${m.is_user ? userName : (m.name || contact.name)}: ${String(m.mes || '').replace(/<[^>]+>/g, '').trim()}`)
-        .join('\n');
-
-    const authorNote = c.chatMetadata?.note_prompt ||
-        c.extensionSettings?.note?.prompts?.find(p => p.active)?.content || '';
-
-    // История переписки в телефоне
-    const phoneHistory = getConversation(contact.id)
-        .slice(-20)
-        .map(m => {
-            let line = '';
-            if (m.type === 'image') {
-                const desc = m._imgCaption || m.injectText || m.caption || 'фото';
-                if (m.from === 'user' || m.sender !== contact.name) {
-                    line = `${userName}: [прислал(а) фото: ${desc}]`;
-                } else {
-                    line = `${contact.name}: [прислал(а) фото: ${m._imgPrompt || desc}]`;
-                }
-            } else {
-                const who = m.sender === userName ? userName : contact.name;
-                line = `${who}: ${m.text || ''}`;
+// ── Загрузка описания из лорбука (активного в чате или персонажа) ──
+async function getLorebookDescription() {
+    try {
+        const c = (typeof SillyTavern?.getContext === 'function') ? SillyTavern.getContext() : {};
+        // Имя лорбука: сначала chat_metadata.world_info, потом поле World персонажа
+        const { chat_metadata } = await import('../../../../script.js');
+        let lbName = chat_metadata?.['world_info'];
+        if (!lbName) {
+            const charIdx = c.characterId;
+            const chars = c.characters;
+            if (chars && charIdx != null) {
+                lbName = chars[charIdx]?.data?.extensions?.world;
             }
-            return line;
-        })
-        .join('\n');
+        }
+        if (!lbName) return '';
+        // Загружаем лорбук
+        const wi = await import('../../../world-info.js');
+        const data = await wi.loadWorldInfo(lbName);
+        if (!data?.entries) return '';
+        // Берём ВСЕ активные записи и склеиваем в один блок
+        const entries = Object.values(data.entries).filter(e => !e.disable);
+        if (!entries.length) return '';
+        const blocks = entries.map(e => {
+            const title = (e.comment || '').trim();
+            const body = String(e.content || '').trim();
+            return title ? `[${title}]
+${body}` : body;
+        }).filter(Boolean);
+        let result = blocks.join('
 
-    const meta = getNpcMeta(contact.id);
+');
+        // Подставляем макросы ST
+        if (result && typeof c.substituteParams === 'function') {
+            result = c.substituteParams(result);
+        }
+        return result.slice(0, 4000);
+    } catch (e) {
+        console.warn('[iMsg] getLorebookDescription failed:', e);
+        return '';
+    }
+}
 
-    const attachHint = attachedImageDataUrl
-        ? `\n[${userName} прикрепил(а) фото к этому сообщению]`
+// ── Основная генерация ответа персонажа ──
+export async function generateCharReply(opts = {}) {
+    if (!isExtraLLMConfigured()) {
+        console.warn('[iMsg] Extra API не настроен');
+        return 0;
+    }
+    const s = loadState();
+    const settings = getSettings();
+    const charName = s.charName || 'Персонаж';
+    const persona = getUserPersona();
+    const userLabel = persona.name || 'User';
+
+    // История переписки
+    const messages = (s.messages || []).slice(-60);
+    const historyText = messages.map((m, idx) => {
+        const who = m.from === 'user' ? userLabel : charName;
+        const flag = m.deleted ? ' [позже удалил(а)]' : '';
+        let img = '';
+        if (m.image || m._imgPrompt) {
+            img = m.from === 'user'
+                ? (m._imgCaption ? ` [прислала фото: ${m._imgCaption}]` : ' [прислала фото]')
+                : (m._imgPrompt ? ` [прислал фото: ${m._imgPrompt}]` : ' [прислал фото]');
+        }
+        // Временной маркер если прошло > 1 часа
+        const prev = idx > 0 ? messages[idx - 1] : null;
+        let gap = '';
+        if (prev?.ts && m.ts) {
+            const h = Math.floor((m.ts - prev.ts) / 3600000);
+            if (h >= 24) { const d = Math.floor(h / 24); gap = `--- прошло ${d} ${d === 1 ? 'день' : d < 5 ? 'дня' : 'дней'} ---\n`; }
+            else if (h >= 1) gap = `--- прошло ${h} ${h === 1 ? 'час' : h < 5 ? 'часа' : 'часов'} ---\n`;
+        }
+        return `${gap}${who}: ${m.text || ''}${img}${flag}`;
+    }).join('\n');
+
+    // Последние реплики основного чата ST
+    const stExcerpt = getMainChatExcerpt(charName, 8);
+    const stBlock = stExcerpt
+        ? `\n\nПАРАЛЛЕЛЬНЫЙ РП-ЧАТ (вы с ${userLabel} общаетесь ещё и напрямую — встреча/звонок/видеозвонок и т.п.; используй как контекст, не придумывай лишнего):\n${stExcerpt}\n`
         : '';
 
-    const systemPrompt = `Ты — ${contact.name}. Оставайся в образе ВСЕГДА.
+    const personaBlock = (settings.includePersonaDescription && persona.description)
+        ? `\nО СОБЕСЕДНИЦЕ (${userLabel}):\n${persona.description}\n`
+        : '';
 
-ОПИСАНИЕ ПЕРСОНАЖА:
-${contact.description}
-
-${authorNote ? `АВТОРСКИЕ ЗАМЕТКИ:\n${authorNote}\n` : ''}
-ТЕКУЩИЙ КОНТЕКСТ (основной чат):
-${chatHistory || 'Контекст отсутствует.'}
-
-СОСТОЯНИЕ:
-- Привязанность к ${userName}: ${meta.affection}/100
-
-ИСТОРИЯ ПЕРЕПИСКИ В ТЕЛЕФОНЕ:
-${phoneHistory || '(пока ничего)'}
-
-ЗАДАЧА: Напиши следующее сообщение(я) от лица ${contact.name}. Одно-два коротких смс.
-Если несколько — раздели ДВОЙНЫМ переносом строки.
-
-ФОТО: если уместно прислать фото — добавь ОТДЕЛЬНЫМ сообщением тег:
-[IMG:english photo description, 10-20 words, what's in the photo, pose, setting]
-Используй РЕДКО (примерно 1 раз на 8-12 сообщений), только когда органично.
-Описание НА АНГЛИЙСКОМ, в стиле dating-app/phone selfie.
-
-ЗАПРЕЩЕНО КАТЕГОРИЧЕСКИ:
-- Писать от третьего лица (он/она/Аякс сделал...)
-- Писать действия в *звёздочках* (*поднял трубку*, *усмехнулся*)
-- Писать нарратив, описания, РП-сцены
-- Добавлять «${contact.name}:» перед текстом
-- Комментировать что ты делаешь
-
-ТОЛЬКО сам текст SMS-сообщения, как настоящий живой человек пишет в мессенджере.`;
-
-    // Vision — если последнее сообщение от юзера содержит фото
-    const visionImages = attachedImageDataUrl ? [attachedImageDataUrl] : [];
-
-    let raw = '';
+    // Получаем описание персонажа из основного чата ST
+    let charDescription = '';
     try {
-        if (!s.useMainApi && isExtraLLMConfigured()) {
-            raw = await callExtraLLM(systemPrompt, visionImages.length ? { images: visionImages } : {});
-        } else {
-            // Основной API — системный промпт как context, userPrompt как финальное сообщение
-            const userPrompt = phoneHistory
-                ? `[Переписка]\n${phoneHistory}\n\n[Новое от ${userName}]: ${userMessage}${attachHint}\n\nОтветь как ${contact.name}:`
-                : `[Первое сообщение от ${userName}]: ${userMessage}${attachHint}\n\nОтветь как ${contact.name}:`;
-            raw = await c.generateRaw({
-                prompt: userPrompt.replace(/\{\{user\}\}/g, userName),
-                systemPrompt: systemPrompt.replace(/\{\{user\}\}/g, userName),
-            });
+        const c = (typeof SillyTavern?.getContext === 'function') ? SillyTavern.getContext() : {};
+        const charIdx = c.characterId;
+        const chars = c.characters;
+        if (chars && charIdx != null) {
+            const char = chars[charIdx];
+            charDescription = [char?.description, char?.personality, char?.mes_example]
+                .filter(Boolean).join('\n').slice(0, 2000);
         }
-    } catch (err) {
-        console.error(LOG, 'Генерация не удалась:', err);
-        return [{ type: 'text', text: '...' }];
+        // Подставляем макросы
+        if (charDescription && typeof c.substituteParams === 'function') {
+            charDescription = c.substituteParams(charDescription);
+        }
+    } catch {}
+
+    const charBlock = charDescription
+        ? `\nОПИСАНИЕ ПЕРСОНАЖА (ты — ${charName}):\n${charDescription}\n`
+        : '';
+
+    // Лорбук текущего чата/персонажа (дополнительный контекст — backstory, факты мира, отношения)
+    const lorebookText = await getLorebookDescription();
+    const lorebookBlock = lorebookText
+        ? `\nДОПОЛНИТЕЛЬНЫЙ КОНТЕКСТ ИЗ ЛОРБУКА:\n${lorebookText}\n`
+        : '';
+
+    const imgEnabled = settings.allowCharImages !== false;
+    const isAutoReply = opts.auto === true;
+    const prompt = `Ты — ${charName}, пишешь ${userLabel} в iMessage. Ты ОДИН и тот же человек что и в основном чате.
+${charBlock}${lorebookBlock}${personaBlock}${stBlock}
+ПЕРЕПИСКА В ТЕЛЕФОНЕ (ты = ${charName}, от старых к новым):
+${historyText || '(сообщений ещё нет — это будет первое сообщение)'}
+
+ЗАДАЧА: Напиши следующее сообщение(я) от ${charName} в iMessage.${isAutoReply ? ' Ты сам решил написать спустя какое-то время — может поделиться мыслью, спросить как дела, прислать что-то интересное.' : ' Ответь на последнее сообщение.'}
+
+ФОРМАТ:
+- Пиши КАК В РЕАЛЬНОЙ ПЕРЕПИСКЕ: кратко, живо, без пафоса.
+- Несколько коротких сообщений — разделяй двойным переносом строки.
+- Если удаляешь сообщение — [DELETED]текст[/DELETED]
+${imgEnabled ? `- Фото: когда ОРГАНИЧНО (показать где находишься, что делаешь, скинуть мем/скрин, или если тебя попросили) — добавь [IMG:English photo description 10-20 words]. НЕ ЧАЩЕ раза на 8-12 сообщений. Описание должно точно отражать персонажа и ситуацию.` : ''}
+- Ответ ТОЛЬКО текст сообщений. Никаких *действий*, никаких пояснений, никакого «${charName}:».`;
+
+    // Vision: последнее фото от юзера
+    const lastMsg = messages[messages.length - 1];
+    const visionImages = (lastMsg?.from === 'user' && lastMsg?.image) ? [lastMsg.image] : [];
+
+    let raw;
+    try {
+        raw = await callExtraLLM(prompt, visionImages.length ? { images: visionImages } : {});
+    } catch (e) {
+        console.error('[iMsg] LLM failed:', e);
+        return 0;
     }
 
     const result = cleanLLMOutput(raw);
-    if (!result) {
-        console.warn(LOG, 'LLM вернул пусто');
-        return [{ type: 'text', text: '...' }];
-    }
+    if (!result) return 0;
 
-    // ── Парсим ответ: разбиваем на части по \n\n ──────────────────────────────
-    // Как в Spark: каждая часть = отдельный пузырёк
-    const parts = result.split(/\n\n+/).map(p => p.trim()).filter(Boolean);
-
-    const results = [];
-    // Аватар для ref
-    const { getCustomAvatar } = await import('./state.js');
-    const refAvatar = (getSettings().useAvatarAsRef !== false)
-        ? (getCustomAvatar(contact.id) || contact.avatar || null)
-        : null;
+    const parts = parseRpMessage(result);
+    let pushed = 0;
 
     for (const part of parts) {
-        // Извлекаем все [IMG:...] теги — как в Spark
-        const imgRegex = /\[IMG:([^\]]+)\]/gi;
-        const imgMatches = [...part.matchAll(imgRegex)];
-        const cleanText = part.replace(imgRegex, '').trim();
-
-        // Текстовая часть (до/вокруг фото)
-        if (cleanText) {
-            results.push({ type: 'text', text: cleanText });
-        }
-
-        // Фото-части — каждый [IMG:...] = отдельный пузырёк, генерация в фоне
-        for (const m of imgMatches) {
-            const imgPrompt = m[1].trim();
+        if (part.image) {
             const genId = `gen_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-
-            // Сразу добавляем пузырёк с состоянием «генерируется»
-            results.push({
-                type: 'image',
-                text: '',
-                imageUrl: '',
-                _generating: true,
-                _imgPrompt: imgPrompt,
-                _genId: genId,
-            });
-
-            // Запускаем генерацию асинхронно (не блокируем UI)
-            const capturedContactId = contact.id;
-            const capturedGenId = genId;
+            pushMessage({ from: 'char', text: '', image: '', _generating: true, _imgPrompt: part._imgPrompt, _genId: genId });
+            pushed++;
+            // Async генерация
             (async () => {
                 try {
-                    const s = getSettings();
-                    const prefix = (s.imagePromptPrefix || '').trim();
-                    const suffix = (s.imagePromptSuffix || '').trim();
-                    const fullPrompt = [prefix, imgPrompt, suffix].filter(Boolean).join(', ');
-                    const dataUrl = await generateImageWithFallback(fullPrompt, refAvatar);
-                    updateGeneratedImage(capturedContactId, capturedGenId, {
-                        imageUrl: dataUrl,
-                        image: dataUrl,
-                        _generating: false,
-                    });
+                    const charAvatar = settings.charAvatar || null;
+                    const ref = (settings.useAvatarAsRef !== false) ? charAvatar : null;
+                    const dataUrl = await generateImageWithFallback(part._imgPrompt, ref);
+                    updateMessage(genId, { image: dataUrl, _generating: false });
                 } catch (err) {
-                    console.warn(LOG, 'inline image failed:', err);
-                    updateGeneratedImage(capturedContactId, capturedGenId, {
-                        imageUrl: '',
-                        image: '',
-                        text: `[фото не загрузилось: ${String(err?.message || err).slice(0, 80)}]`,
-                        _generating: false,
-                    });
+                    console.warn('[iMsg] inline image failed:', err);
+                    updateMessage(genId, { image: '', text: `[фото не загрузилось]`, _generating: false });
                 }
+                window.dispatchEvent(new CustomEvent('imsg:rerender'));
             })();
+        } else {
+            pushMessage({ from: 'char', text: part.text || '', deleted: part.deleted || false });
+            pushed++;
         }
     }
 
-    updateNpcMeta(contact.id, { lastSeen: Date.now() });
-    return results.length ? results : [{ type: 'text', text: '...' }];
+    if (pushed > 0) {
+        syncToMainChat();
+        window.dispatchEvent(new CustomEvent('imsg:rerender'));
+        scheduleNextAutoReply();
+    }
+    return pushed;
 }
 
-let _autoMessageCallback = null;
-let _schedulerInterval = null;
-
-export function setAutoMessageCallback(fn) {
-    _autoMessageCallback = fn;
+// Перегенерация картинки
+export async function regenerateChatImage(msgTs) {
+    const s = loadState();
+    const msg = (s.messages || []).find(m => m && m.ts === Number(msgTs));
+    if (!msg || !msg._imgPrompt) return;
+    const settings = getSettings();
+    msg._generating = true;
+    msg.image = '';
+    save();
+    window.dispatchEvent(new CustomEvent('imsg:rerender'));
+    try {
+        const ref = (settings.useAvatarAsRef !== false) ? (settings.charAvatar || null) : null;
+        const dataUrl = await generateImageWithFallback(msg._imgPrompt, ref);
+        msg.image = dataUrl;
+        msg._generating = false;
+        save();
+    } catch (err) {
+        console.warn('[iMsg] regen failed:', err);
+        msg.image = '';
+        msg.text = '[фото не загрузилось]';
+        msg._generating = false;
+        save();
+    }
+    window.dispatchEvent(new CustomEvent('imsg:rerender'));
 }
 
-export function startAutoMessageScheduler(getContactsFn) {
-    if (_schedulerInterval) clearInterval(_schedulerInterval);
-    _schedulerInterval = setInterval(() => {
-        const s = getSettings();
-        if (!s.autoMessagesEnabled) return;
-
-        const contacts = getContactsFn();
-        if (!contacts.length) return;
-
-        const now = Date.now();
-        const silenceThreshold = (s.autoMessageSilenceMin || 30) * 60 * 1000;
-        const cooldown = (s.autoMessageCooldownMin || 60) * 60 * 1000;
-
-        for (const contact of contacts) {
-            const meta = getNpcMeta(contact.id);
-            const lastSeen = meta.lastSeen || 0;
-            const lastCooldown = meta.cooldown || 0;
-
-            if (lastSeen > 0 &&
-                now - lastSeen > silenceThreshold &&
-                now - lastCooldown > cooldown) {
-                updateNpcMeta(contact.id, { cooldown: now });
-                if (_autoMessageCallback) {
-                    _autoMessageCallback(contact).catch(e =>
-                        console.error(LOG, 'Автосообщение failed:', e)
-                    );
-                }
-            }
+// Caption фото юзера через vision
+export async function captionUserImage(msgTs, dataUrl) {
+    if (!dataUrl || !isExtraLLMConfigured()) return;
+    try {
+        const raw = await callExtraLLM(
+            'Опиши это фото ОДНИМ коротким предложением на русском (макс 20 слов): что/кто, поза, одежда, обстановка. Без вступлений.',
+            { images: [dataUrl], maxTokens: 120, temperature: 0.4 }
+        );
+        const caption = cleanLLMOutput(raw).replace(/^["«]|["»]$/g, '').trim().slice(0, 200);
+        if (caption) {
+            const s = loadState();
+            const msg = (s.messages || []).find(m => m && m.ts === Number(msgTs));
+            if (msg) { msg._imgCaption = caption; save(); }
         }
-    }, 60 * 1000);
+    } catch (e) { console.warn('[iMsg] caption failed:', e); }
+}
+
+// ── Парсинг ответа бота из основного чата ST → инжект в телефон ──
+// Смотрит новые сообщения персонажа в основном чате и переносит их в переписку телефона.
+let _lastSyncedMsgId = null;
+
+export function syncFromMainChat() {
+    try {
+        const c = (typeof SillyTavern?.getContext === 'function') ? SillyTavern.getContext() : {};
+        const chat = c.chat || [];
+        if (!chat.length) return;
+        const s = loadState();
+        const charName = s.charName || c.name2 || '';
+
+        // Находим новые сообщения от персонажа которые ещё не в телефоне
+        const charMsgs = chat.filter(m => !m.is_user && m.mes);
+        if (!charMsgs.length) return;
+
+        const lastMain = charMsgs[charMsgs.length - 1];
+        // Проверяем по хэшу контента — уже обработали?
+        const msgKey = `${lastMain.send_date || ''}::${String(lastMain.mes || '').slice(0, 50)}`;
+        if (_lastSyncedMsgId === msgKey) return;
+
+        // Парсим текст РП — есть ли в нём действие написания телефону?
+        const raw = String(lastMain.mes || '');
+        const hasPhoneAction = /написал[аи]?|напечатал[аи]?|отправил[аи]?|прислал[аи]?|скинул[аи]?/i.test(raw) &&
+            /телефон|сообщение|смс|мессенджер|написал в|текст/i.test(raw);
+
+        if (!hasPhoneAction) return;
+
+        const parts = parseRpMessage(raw);
+        if (!parts.length) return;
+
+        // Не добавляем дубликаты: проверяем есть ли уже такой текст в последних 3 сообщениях
+        const recentTexts = (s.messages || []).slice(-3).map(m => (m.text || '').trim());
+
+        _lastSyncedMsgId = msgKey;
+        let added = 0;
+        for (const part of parts) {
+            if (!part.text && !part.image) continue;
+            if (part.text && recentTexts.includes(part.text.trim())) continue;
+            pushMessage({ from: 'char', text: part.text || '', deleted: part.deleted || false, _fromMain: true });
+            added++;
+        }
+        if (added > 0) {
+            console.log(`[iMsg] syncFromMainChat: добавлено ${added} сообщений из РП`);
+            window.dispatchEvent(new CustomEvent('imsg:rerender'));
+        }
+    } catch (e) {
+        console.warn('[iMsg] syncFromMainChat failed:', e);
+    }
+}
+
+// ── Инжект контекста телефона в основной чат ST ──
+export function syncToMainChat() {
+    const settings = getSettings();
+    if (!settings.injectIntoMain) {
+        setExtensionPrompt(PROMPT_KEY, '', extension_prompt_types.IN_PROMPT, 0);
+        return '';
+    }
+    const s = loadState();
+    const charName = s.charName || 'Персонаж';
+    const persona = getUserPersona();
+    const userLabel = persona.name || 'User';
+
+    const msgs = (s.messages || []).slice(-20);
+    if (!msgs.length) {
+        setExtensionPrompt(PROMPT_KEY, '', extension_prompt_types.IN_PROMPT, 0);
+        return '';
+    }
+
+    const lines = [];
+    lines.push(`[IMESSAGE — переписка ${charName} и ${userLabel} в телефоне. Ты (${charName}) — ОДИН и тот же человек что и здесь.]`);
+    lines.push(`КРИТИЧЕСКИ ВАЖНО: НЕ выдумывай сообщений которых нет ниже. Если хочешь сослаться на переписку — цитируй ТОЛЬКО то что есть.`);
+    lines.push('');
+    lines.push(`=== ПЕРЕПИСКА В ТЕЛЕФОНЕ (${msgs.length} посл. сообщений) ===`);
+    for (const m of msgs) {
+        const who = m.from === 'user' ? userLabel : charName;
+        const flag = m.deleted ? ' [удалил(а)]' : '';
+        const img = m.image ? ' [фото]' : '';
+        lines.push(`${who}: ${(m.text || '').slice(0, 300)}${img}${flag}`);
+    }
+    lines.push('=== КОНЕЦ ===');
+
+    const text = lines.join('\n');
+    setExtensionPrompt(PROMPT_KEY, text, extension_prompt_types.IN_PROMPT, settings.injectDepth || 4);
+    return text;
+}
+
+export function clearMainChatInjection() {
+    setExtensionPrompt(PROMPT_KEY, '', extension_prompt_types.IN_PROMPT, 0);
+}
+
+export function injectIntoChatCompletion(eventData) {
+    try {
+        const settings = getSettings();
+        if (!settings.injectIntoMain) return;
+        const chat = eventData?.chat;
+        if (!Array.isArray(chat)) return;
+        const text = syncToMainChat();
+        if (!text) return;
+        const marker = '[IMESSAGE —';
+        const already = chat.some(m => typeof m?.content === 'string' && m.content.includes(marker));
+        if (already) return;
+        const sysMsg = { role: 'system', content: text };
+        let insertAt = chat.length;
+        for (let i = chat.length - 1; i >= 0; i--) {
+            if (chat[i]?.role === 'user') { insertAt = i; break; }
+        }
+        chat.splice(insertAt, 0, sysMsg);
+    } catch (e) { console.warn('[iMsg] injectIntoChatCompletion failed:', e); }
+}
+
+// ── Авто-ответ по таймеру ──
+let _autoTimer = null;
+
+export function scheduleNextAutoReply() {
+    const settings = getSettings();
+    if (!settings.autoReply?.enabled) return;
+    clearAutoReplyTimer();
+    const min = (settings.autoReply.minMinutes || 15) * 60 * 1000;
+    const max = (settings.autoReply.maxMinutes || 120) * 60 * 1000;
+    const delay = min + Math.random() * (max - min);
+    const s = loadState();
+    s.nextAutoTs = Date.now() + delay;
+    save();
+    console.log(`[iMsg] Следующий авто-ответ через ${Math.round(delay / 60000)} мин`);
+    _autoTimer = setTimeout(async () => {
+        try {
+            const n = await generateCharReply({ auto: true });
+            if (n > 0) window.dispatchEvent(new CustomEvent('imsg:rerender'));
+        } catch (e) { console.error('[iMsg] auto-reply failed:', e); }
+    }, delay);
+}
+
+export function clearAutoReplyTimer() {
+    if (_autoTimer) { clearTimeout(_autoTimer); _autoTimer = null; }
+}
+
+export function resetAutoReplyTimer() {
+    clearAutoReplyTimer();
+    scheduleNextAutoReply();
+}
+
+// ── Достать последние реплики из основного чата ST ──
+function getMainChatExcerpt(charName, n = 8) {
+    try {
+        const c = (typeof SillyTavern?.getContext === 'function') ? SillyTavern.getContext() : {};
+        const chat = c.chat || [];
+        if (!chat.length) return '';
+        const tail = chat.slice(-n);
+        return tail.map(m => {
+            const who = m.is_user ? (c.name1 || 'Я') : (m.name || charName);
+            const t = String(m.mes || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim().slice(0, 200);
+            return `${who}: ${t}`;
+        }).filter(l => l.length > 5).join('\n');
+    } catch { return ''; }
 }
