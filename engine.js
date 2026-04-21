@@ -1,11 +1,12 @@
-// engine.js — логика генерации НПС и разбор img-тегов для PhoneMSG
+// engine.js — логика генерации НПС для PhoneMSG
+// Картинки: НПС пишет [IMG:english photo description], генерация идёт в фоне как в Spark
 
 import { chat_metadata } from '../../../../script.js';
 import {
     addMessage, getConversation, getContacts, getNpcMeta, updateNpcMeta,
-    getSettings, getDynamicContacts
+    getSettings, getDynamicContacts, save
 } from './state.js';
-import { callExtraLLM, isExtraLLMConfigured, generateImageFromInstruction } from './api.js';
+import { callExtraLLM, isExtraLLMConfigured, generateImageWithFallback } from './api.js';
 
 const LOG = '[PhoneMSG-Engine]';
 const ctx = () => (typeof SillyTavern?.getContext === 'function' ? SillyTavern.getContext() : null);
@@ -110,100 +111,49 @@ async function loadContactsFromLorebook() {
     return contacts;
 }
 
-function stripServiceLines(text) {
+// ── Очистка <think>-тегов и служебных тегов ──────────────────────────────────
+function cleanLLMOutput(text) {
     if (!text) return '';
-    return String(text)
-        .replace(/<horae>\s*<\/horae>/gi, '')
-        .replace(/<horaeevent>\s*<\/horaeevent>/gi, '')
-        .replace(/<horae>[\s\S]*?<\/horae>/gi, '')
-        .replace(/<horaeevent>[\s\S]*?<\/horaeevent>/gi, '')
-        .trim();
+    let t = String(text);
+    // Убираем think-теги reasoning-моделей
+    t = t.replace(/<(think|thinking|reasoning|analysis|reflection)[^>]*>[\s\S]*?<\/\1>/gi, '');
+    t = t.replace(/<(think|thinking|reasoning)[^>]*>[\s\S]*?(?=\n\n|$)/gi, '');
+    t = t.replace(/```(?:think|thinking|reasoning)[\s\S]*?```/gi, '');
+    // Убираем horae/horaeevent
+    t = t.replace(/<horae>\s*<\/horae>/gi, '');
+    t = t.replace(/<horaeevent>\s*<\/horaeevent>/gi, '');
+    t = t.replace(/<horae>[\s\S]*?<\/horae>/gi, '');
+    t = t.replace(/<horaeevent>[\s\S]*?<\/horaeevent>/gi, '');
+    // Убираем теги-мосты если НПС их использует
+    t = t.replace(/\[телефон:[^\]]+\]\s*/gi, '');
+    t = t.replace(/\[контакт:[^\]]+\]\s*/gi, '');
+    // Убираем «Имя:» в начале если модель дублирует имя
+    t = t.replace(/^[А-ЯЁA-Z][а-яёa-zA-Z]+\s*:\s*/, '');
+    return t.trim();
 }
 
-// ─── Убирает из текста теги [телефон:Имя] и [контакт:Имя:ID] ───────────────
-function stripPhoneTags(text, bridgeIncomingTag = 'телефон', bridgeContactTag = 'контакт') {
-    return String(text || '')
-        .replace(new RegExp(`\\[${escapeRegex(bridgeIncomingTag)}:[^\\]]+?\\]\\s*`, 'gi'), '')
-        .replace(new RegExp(`\\[${escapeRegex(bridgeContactTag)}:[^\\]]+?\\]\\s*`, 'gi'), '')
-        .replace(/\[IMG:GEN\]/g, '')
-        .trim();
+// ── Обновить сообщение по _genId (для async-генерации картинки) ──────────────
+function updateGeneratedImage(contactId, genId, patch) {
+    const state_mod = (typeof SillyTavern?.getContext === 'function')
+        ? SillyTavern.getContext()?.chatMetadata?.PhoneMSG
+        : null;
+
+    // Импортируем getState через динамический импорт чтобы избежать circular
+    import('./state.js').then(({ getState, save }) => {
+        const state = getState();
+        const list = state.conversations?.[contactId];
+        if (!list) return;
+        const msg = list.find(m => m && m._genId === genId);
+        if (!msg) return;
+        Object.assign(msg, patch);
+        save();
+        // Сигнализируем UI о перерендере
+        window.dispatchEvent(new CustomEvent('phonemsg:rerender', { detail: { contactId } }));
+    });
 }
 
-function escapeRegex(s) {
-    return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-// ─── Парсинг img-тегов НПС-ответа ───────────────────────────────────────────
-// Формат: <img data-iig-instruction='{"style":"...","prompt":"...","aspect_ratio":"...","image_size":"..."}' src="[IMG:GEN]">
-export function parseModelReply(rawText) {
-    const text = String(rawText || '');
-    // Более гибкий паттерн — ловит одинарные И двойные кавычки вокруг JSON
-    const imgPattern = /<img\s[^>]*data-iig-instruction=(['"])(\{[^'"]*\})\1[^>]*>/gi;
-
-    const images = [];
-    let cleaned = '';
-    let lastIndex = 0;
-    let m;
-
-    while ((m = imgPattern.exec(text)) !== null) {
-        cleaned += text.slice(lastIndex, m.index);
-        lastIndex = m.index + m[0].length;
-
-        try {
-            const json = JSON.parse(m[2]);
-            images.push({ rawTag: m[0], instruction: json });
-        } catch (e) {
-            // Попробуем заменить плейсхолдеры и распарсить снова
-            try {
-                const fixed = m[2]
-                    .replace(/"\[STYLE\]"/g, '"photorealistic portrait"')
-                    .replace(/"\[DESC\]"/g, '"a photo"')
-                    .replace(/"\[RATIO\]"/g, '"1:1"')
-                    .replace(/"\[SIZE\]"/g, '"1K"');
-                const json = JSON.parse(fixed);
-                images.push({ rawTag: m[0], instruction: json });
-            } catch {
-                console.warn(LOG, 'bad data-iig-instruction JSON:', m[2]);
-            }
-        }
-    }
-    cleaned += text.slice(lastIndex);
-
-    const s = getSettings();
-    const finalText = stripPhoneTags(
-        stripServiceLines(cleaned).trim(),
-        s.bridgeIncomingTag || 'телефон',
-        s.bridgeContactTag || 'контакт'
-    );
-
-    return { text: finalText, images };
-}
-
-// ─── Разбить ответ НПС на отдельные реплики (по \n\n или [телефон:] блокам) ─
-// Возвращает массив { text, images[] }
-export function splitNPCReply(rawText) {
-    const s = getSettings();
-    const phoneTag = escapeRegex(s.bridgeIncomingTag || 'телефон');
-
-    // Если НПС использует [телефон:Имя] теги — разбиваем по ним
-    const tagRe = new RegExp(`\\[${phoneTag}:[^\\]]+?\\]\\s*([\\s\\S]*?)(?=\\[${phoneTag}:|$)`, 'gi');
-    const tagMatches = [...rawText.matchAll(tagRe)];
-
-    if (tagMatches.length > 1) {
-        return tagMatches.map(tm => parseModelReply(tm[1].trim())).filter(r => r.text || r.images.length);
-    }
-
-    // Иначе разбиваем по двойному переносу строки
-    const parts = rawText.split(/\n{2,}/);
-    if (parts.length > 1) {
-        return parts.map(p => parseModelReply(p.trim())).filter(r => r.text || r.images.length);
-    }
-
-    // Одна реплика
-    return [parseModelReply(rawText)];
-}
-
-// ─── Генерация ответа НПС ────────────────────────────────────────────────────
+// ── Основная генерация ответа НПС ─────────────────────────────────────────────
+// Возвращает массив { type, text, _genId?, _generating? } — каждый элемент = пузырёк
 export async function generateNPCReply(contact, userMessage, attachedImageDataUrl = null) {
     const c = ctx();
     if (!c) return [{ type: 'text', text: '...' }];
@@ -211,6 +161,7 @@ export async function generateNPCReply(contact, userMessage, attachedImageDataUr
     const s = getSettings();
     const userName = c.name1 || 'User';
 
+    // История основного чата (последние 30 без phonemsg-маркеров)
     const chatHistory = (c.chat || [])
         .slice(-30)
         .filter(m => !m.extra?.phonemsg_marker)
@@ -220,22 +171,30 @@ export async function generateNPCReply(contact, userMessage, attachedImageDataUr
     const authorNote = c.chatMetadata?.note_prompt ||
         c.extensionSettings?.note?.prompts?.find(p => p.active)?.content || '';
 
+    // История переписки в телефоне
     const phoneHistory = getConversation(contact.id)
         .slice(-20)
         .map(m => {
+            let line = '';
             if (m.type === 'image') {
-                const desc = m.injectText || m.caption || 'фото';
-                return `${m.sender === userName ? userName : contact.name}: [отправил(а) фото: ${desc}]`;
+                const desc = m._imgCaption || m.injectText || m.caption || 'фото';
+                if (m.from === 'user' || m.sender !== contact.name) {
+                    line = `${userName}: [прислал(а) фото: ${desc}]`;
+                } else {
+                    line = `${contact.name}: [прислал(а) фото: ${m._imgPrompt || desc}]`;
+                }
+            } else {
+                const who = m.sender === userName ? userName : contact.name;
+                line = `${who}: ${m.text || ''}`;
             }
-            return `${m.sender === userName ? userName : contact.name}: ${m.text}`;
+            return line;
         })
         .join('\n');
 
     const meta = getNpcMeta(contact.id);
 
-    // Подсказка по вложению
     const attachHint = attachedImageDataUrl
-        ? `\n\n[${userName} прикрепил(а) фото к этому сообщению. Опиши реакцию на него.]`
+        ? `\n[${userName} прикрепил(а) фото к этому сообщению]`
         : '';
 
     const systemPrompt = `Ты — ${contact.name}. Оставайся в образе ВСЕГДА.
@@ -244,83 +203,115 @@ export async function generateNPCReply(contact, userMessage, attachedImageDataUr
 ${contact.description}
 
 ${authorNote ? `АВТОРСКИЕ ЗАМЕТКИ:\n${authorNote}\n` : ''}
-ТЕКУЩИЙ КОНТЕКСТ РП:
-${chatHistory || 'Контекст ещё отсутствует.'}
+ТЕКУЩИЙ КОНТЕКСТ (основной чат):
+${chatHistory || 'Контекст отсутствует.'}
 
 СОСТОЯНИЕ:
 - Привязанность к ${userName}: ${meta.affection}/100
 
-ФОРМАТ ОТВЕТА — СТРОГО СОБЛЮДАЙ:
-1. Напиши текст смс (одно-два предложения, без html и скобок).
-2. Сразу после текста, на новой строке, добавь img-тег для фотографии:
+ИСТОРИЯ ПЕРЕПИСКИ В ТЕЛЕФОНЕ:
+${phoneHistory || '(пока ничего)'}
 
-<img data-iig-instruction='{"style":"СТИЛЬ","prompt":"ОПИСАНИЕ","aspect_ratio":"СООТНОШЕНИЕ","image_size":"РАЗМЕР"}' src="[IMG:GEN]">
+ЗАДАЧА: Напиши следующее сообщение(я) от лица ${contact.name}. Одно-два коротких смс.
+Если несколько — раздели ДВОЙНЫМ переносом строки.
 
-Заполняй поля:
-- "style": стиль фото (например: "photorealistic portrait, selfie", "cinematic photo")
-- "prompt": конкретное описание того что на фото (внешность, одежда, поза, обстановка)
-- "aspect_ratio": "1:1" или "9:16" или "16:9"
-- "image_size": "1K"
+ФОТО: если уместно прислать фото — добавь ОТДЕЛЬНЫМ сообщением тег:
+[IMG:english photo description, 10-20 words, what's in the photo, pose, setting]
+Используй РЕДКО (примерно 1 раз на 8-12 сообщений), только когда органично.
+Описание НА АНГЛИЙСКОМ, в стиле dating-app/phone selfie.
 
-ВАЖНО: src ВСЕГДА строго "[IMG:GEN]". JSON — валидный. Кавычки внутри JSON только двойные.
-ЗАПРЕЩЕНО: плейсхолдеры вида [DESC], [STYLE] и т.п. — заполняй реальным текстом.`;
+ВАЖНО: только текст сообщений. Без <think>, без markdown, без «${contact.name}:», без комментариев.`;
 
-    const userPrompt = phoneHistory
-        ? `[Переписка]\n${phoneHistory}\n\n[Новое от ${userName}]: ${userMessage}${attachHint}\n\nОтветь как ${contact.name}:`
-        : `[Первое сообщение от ${userName}]: ${userMessage}${attachHint}\n\nОтветь как ${contact.name}:`;
+    // Vision — если последнее сообщение от юзера содержит фото
+    const visionImages = attachedImageDataUrl ? [attachedImageDataUrl] : [];
 
-    const finalSystem = systemPrompt.replace(/\{\{user\}\}/g, userName);
-    const finalUser = userPrompt.replace(/\{\{user\}\}/g, userName);
-
-    let replyText = '';
+    let raw = '';
     try {
         if (!s.useMainApi && isExtraLLMConfigured()) {
-            // Vision: если есть вложение — передаём картинку
-            if (attachedImageDataUrl) {
-                replyText = await callExtraLLM(finalUser, {
-                    system: finalSystem,
-                    images: [attachedImageDataUrl],
-                });
-            } else {
-                replyText = await callExtraLLM(finalUser, { system: finalSystem });
-            }
+            raw = await callExtraLLM(systemPrompt, visionImages.length ? { images: visionImages } : {});
         } else {
-            replyText = await c.generateRaw({ prompt: finalUser, systemPrompt: finalSystem });
+            // Основной API — системный промпт как context, userPrompt как финальное сообщение
+            const userPrompt = phoneHistory
+                ? `[Переписка]\n${phoneHistory}\n\n[Новое от ${userName}]: ${userMessage}${attachHint}\n\nОтветь как ${contact.name}:`
+                : `[Первое сообщение от ${userName}]: ${userMessage}${attachHint}\n\nОтветь как ${contact.name}:`;
+            raw = await c.generateRaw({
+                prompt: userPrompt.replace(/\{\{user\}\}/g, userName),
+                systemPrompt: systemPrompt.replace(/\{\{user\}\}/g, userName),
+            });
         }
     } catch (err) {
         console.error(LOG, 'Генерация не удалась:', err);
         return [{ type: 'text', text: '...' }];
     }
 
-    // Разбиваем ответ на несколько реплик
-    const replies = splitNPCReply(replyText);
+    const result = cleanLLMOutput(raw);
+    if (!result) {
+        console.warn(LOG, 'LLM вернул пусто');
+        return [{ type: 'text', text: '...' }];
+    }
+
+    // ── Парсим ответ: разбиваем на части по \n\n ──────────────────────────────
+    // Как в Spark: каждая часть = отдельный пузырёк
+    const parts = result.split(/\n\n+/).map(p => p.trim()).filter(Boolean);
+
     const results = [];
-
-    // Аватар для refImage
+    // Аватар для ref
     const { getCustomAvatar } = await import('./state.js');
-    const refImage = getCustomAvatar(contact.id) || contact.avatar || null;
+    const refAvatar = (getSettings().useAvatarAsRef !== false)
+        ? (getCustomAvatar(contact.id) || contact.avatar || null)
+        : null;
 
-    for (const reply of replies) {
-        if (reply.images.length > 0) {
-            const instr = reply.images[0].instruction;
-            const caption = reply.text || '';
-            const injectText = caption.slice(0, 120) || 'фото';
+    for (const part of parts) {
+        // Извлекаем все [IMG:...] теги — как в Spark
+        const imgRegex = /\[IMG:([^\]]+)\]/gi;
+        const imgMatches = [...part.matchAll(imgRegex)];
+        const cleanText = part.replace(imgRegex, '').trim();
 
-            // Пробуем сгенерировать картинку
-            let imageUrl = null;
-            try {
-                imageUrl = await generateImageFromInstruction(instr, refImage);
-            } catch (e) {
-                console.error(LOG, 'generateImage failed:', e);
-            }
+        // Текстовая часть (до/вокруг фото)
+        if (cleanText) {
+            results.push({ type: 'text', text: cleanText });
+        }
 
-            if (imageUrl) {
-                results.push({ type: 'image', text: caption, imageUrl, caption, injectText });
-            } else if (caption) {
-                results.push({ type: 'text', text: caption });
-            }
-        } else if (reply.text) {
-            results.push({ type: 'text', text: reply.text });
+        // Фото-части — каждый [IMG:...] = отдельный пузырёк, генерация в фоне
+        for (const m of imgMatches) {
+            const imgPrompt = m[1].trim();
+            const genId = `gen_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+            // Сразу добавляем пузырёк с состоянием «генерируется»
+            results.push({
+                type: 'image',
+                text: '',
+                imageUrl: '',
+                _generating: true,
+                _imgPrompt: imgPrompt,
+                _genId: genId,
+            });
+
+            // Запускаем генерацию асинхронно (не блокируем UI)
+            const capturedContactId = contact.id;
+            const capturedGenId = genId;
+            (async () => {
+                try {
+                    const s = getSettings();
+                    const prefix = (s.imagePromptPrefix || '').trim();
+                    const suffix = (s.imagePromptSuffix || '').trim();
+                    const fullPrompt = [prefix, imgPrompt, suffix].filter(Boolean).join(', ');
+                    const dataUrl = await generateImageWithFallback(fullPrompt, refAvatar);
+                    updateGeneratedImage(capturedContactId, capturedGenId, {
+                        imageUrl: dataUrl,
+                        image: dataUrl,
+                        _generating: false,
+                    });
+                } catch (err) {
+                    console.warn(LOG, 'inline image failed:', err);
+                    updateGeneratedImage(capturedContactId, capturedGenId, {
+                        imageUrl: '',
+                        image: '',
+                        text: `[фото не загрузилось: ${String(err?.message || err).slice(0, 80)}]`,
+                        _generating: false,
+                    });
+                }
+            })();
         }
     }
 
