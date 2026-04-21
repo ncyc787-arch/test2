@@ -111,24 +111,58 @@ async function loadContactsFromLorebook() {
     return contacts;
 }
 
-// ── Очистка <think>-тегов и служебных тегов ──────────────────────────────────
+// ── Очистка <think>-тегов, служебных тегов и РП-нарратива ───────────────────
 function cleanLLMOutput(text) {
     if (!text) return '';
     let t = String(text);
+
     // Убираем think-теги reasoning-моделей
     t = t.replace(/<(think|thinking|reasoning|analysis|reflection)[^>]*>[\s\S]*?<\/\1>/gi, '');
     t = t.replace(/<(think|thinking|reasoning)[^>]*>[\s\S]*?(?=\n\n|$)/gi, '');
     t = t.replace(/```(?:think|thinking|reasoning)[\s\S]*?```/gi, '');
+
     // Убираем horae/horaeevent
     t = t.replace(/<horae>\s*<\/horae>/gi, '');
     t = t.replace(/<horaeevent>\s*<\/horaeevent>/gi, '');
     t = t.replace(/<horae>[\s\S]*?<\/horae>/gi, '');
     t = t.replace(/<horaeevent>[\s\S]*?<\/horaeevent>/gi, '');
+
     // Убираем теги-мосты если НПС их использует
     t = t.replace(/\[телефон:[^\]]+\]\s*/gi, '');
     t = t.replace(/\[контакт:[^\]]+\]\s*/gi, '');
+
     // Убираем «Имя:» в начале если модель дублирует имя
     t = t.replace(/^[А-ЯЁA-Z][а-яёa-zA-Z]+\s*:\s*/, '');
+
+    // Убираем DESC-теги (иногда модель пишет [DESC:...] вместо [IMG:...])
+    t = t.replace(/\[DESC\s*\]/gi, '');
+
+    // Убираем РП-нарратив — строки целиком в *звёздочках* или _подчёркиваниях_
+    // (это действия, а не SMS-текст: *Аякс уставился в экран*)
+    t = t.split('\n').filter(line => {
+        const l = line.trim();
+        if (!l) return true; // пустые строки сохраняем для разделения пузырьков
+        // Строка полностью заключена в *...* или _..._ — РП-действие, убираем
+        if (/^\*[^*]+\*$/.test(l)) return false;
+        if (/^_[^_]+_$/.test(l)) return false;
+        // Строка начинается с «Он», «Она», «Аякс» + глагол — нарратив, убираем
+        // Слишком агрессивно не делаем, только явные случаи вида "Он увеличил фото."
+        return true;
+    }).join('\n');
+
+    // Убираем строки вида *действие* внутри текста (inline RP)
+    // Оставляем только если это единственное содержимое сообщения
+    t = t.replace(/\*[^*\n]{3,80}\*/g, (match, offset, str) => {
+        // Если вся строка это *...* — уже убрали выше, здесь убираем только inline
+        const lineStart = str.lastIndexOf('\n', offset) + 1;
+        const lineEnd = str.indexOf('\n', offset);
+        const line = str.slice(lineStart, lineEnd === -1 ? str.length : lineEnd).trim();
+        // Если весь текст строки = этот match — уже обработано выше
+        if (line === match.trim()) return match;
+        // Иначе убираем inline РП
+        return '';
+    });
+
     return t.trim();
 }
 
@@ -220,7 +254,14 @@ ${phoneHistory || '(пока ничего)'}
 Используй РЕДКО (примерно 1 раз на 8-12 сообщений), только когда органично.
 Описание НА АНГЛИЙСКОМ, в стиле dating-app/phone selfie.
 
-ВАЖНО: только текст сообщений. Без <think>, без markdown, без «${contact.name}:», без комментариев.`;
+ЗАПРЕЩЕНО КАТЕГОРИЧЕСКИ:
+- Писать от третьего лица (он/она/Аякс сделал...)
+- Писать действия в *звёздочках* (*поднял трубку*, *усмехнулся*)
+- Писать нарратив, описания, РП-сцены
+- Добавлять «${contact.name}:» перед текстом
+- Комментировать что ты делаешь
+
+ТОЛЬКО сам текст SMS-сообщения, как настоящий живой человек пишет в мессенджере.`;
 
     // Vision — если последнее сообщение от юзера содержит фото
     const visionImages = attachedImageDataUrl ? [attachedImageDataUrl] : [];
