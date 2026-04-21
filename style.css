@@ -1,4 +1,222 @@
 /* ═══════════════════════════════════════════
+   PHONEMSG — стили телефона и FAB
+   ═══════════════════════════════════════════ */
+
+#phonemsg-fab {
+    position: fixed !important;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #007AFF 0%, #0055cc 100%);
+    border: none;
+    box-shadow: 0 4px 20px rgba(0,122,255,.5), 0 2px 8px rgba(0,0,0,.4);
+    cursor: grab;
+    z-index: 2147483000 !important;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform .2s, box-shadow .25s;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    margin: 0 !important;
+    left: auto !important;
+}
+#phonemsg-fab:hover { transform: translateY(-2px) scale(1.05); box-shadow: 0 8px 28px rgba(0,122,255,.6), 0 2px 8px rgba(0,0,0,.4); }
+#phonemsg-fab:active, #phonemsg-fab.pmsg-fab-dragging { cursor: grabbing; transform: scale(.95); transition: none; }
+
+.pmsg-badge {
+    position: absolute; top: -4px; right: -4px;
+    min-width: 18px; height: 18px; padding: 0 4px;
+    border-radius: 9px; background: #FF3B30; color: #fff;
+    font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    border: 2px solid #000; box-sizing: border-box; z-index: 1;
+}
+
+#phonemsg-shell {
+    position: fixed !important;
+    z-index: 2147483001 !important;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    inset: 0;
+    background: rgba(0,0,0,.55);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+}
+#phonemsg-shell.pmsg-floating {
+    inset: auto; bottom: 20px; right: 90px;
+    background: transparent;
+    backdrop-filter: none; -webkit-backdrop-filter: none;
+    width: auto; height: auto;
+}
+
+.pmsg-phone-frame {
+    width: 375px; max-width: 100%;
+    height: 780px; max-height: 95vh;
+    background: #000; border-radius: 40px; overflow: hidden;
+    display: flex; flex-direction: column;
+    box-shadow: 0 24px 80px rgba(0,0,0,.7), 0 0 0 1px rgba(255,255,255,.12);
+    font-family: -apple-system, 'SF Pro Display', 'Helvetica Neue', sans-serif;
+    color: #fff; position: relative;
+}
+#phonemsg-shell.pmsg-fullscreen .pmsg-phone-frame {
+    width: 100%; max-width: 430px;
+    height: 100%; max-height: 100%;
+    border-radius: 0;
+}
+
+.pmsg-notch {
+    position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+    width: 120px; height: 32px; background: #000;
+    border-radius: 0 0 20px 20px; z-index: 10;
+}
+.pmsg-status-bar {
+    height: 44px; display: flex; align-items: center;
+    justify-content: space-between; padding: 8px 20px 0;
+    font-size: 12px; font-weight: 600; flex-shrink: 0;
+    position: relative; z-index: 5;
+}
+.pmsg-time-status { font-size: 15px; font-weight: 700; }
+.pmsg-signal { font-size: 10px; letter-spacing: 1px; opacity: .7; }
+.pmsg-close-btn {
+    background: rgba(255,255,255,.12); border: none; border-radius: 50%;
+    width: 26px; height: 26px; cursor: pointer; color: #fff; font-size: 16px;
+    display: flex; align-items: center; justify-content: center; padding: 0; transition: background .15s;
+}
+.pmsg-close-btn:hover { background: rgba(255,255,255,.22); }
+
+#phonemsg-screen {
+    flex: 1; overflow-y: auto; overflow-x: hidden;
+    display: flex; flex-direction: column; background: #000;
+}
+
+.pmsg-screen-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 18px 8px; font-size: 22px; font-weight: 700;
+    letter-spacing: -0.5px; flex-shrink: 0;
+}
+.pmsg-settings-btn {
+    background: rgba(255,255,255,.1); border: none; border-radius: 50%;
+    width: 32px; height: 32px; cursor: pointer; color: #fff; font-size: 17px;
+    display: flex; align-items: center; justify-content: center;
+}
+
+.pmsg-contacts-list { display: flex; flex-direction: column; }
+.pmsg-contact-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 18px; cursor: pointer;
+    border-bottom: 1px solid rgba(255,255,255,.06);
+    transition: background .12s;
+}
+.pmsg-contact-row:active { background: rgba(255,255,255,.06); }
+.pmsg-contact-avatar {
+    width: 48px; height: 48px; border-radius: 50%; flex-shrink: 0;
+    object-fit: cover; display: flex; align-items: center; justify-content: center;
+    font-size: 20px; font-weight: 700; color: #fff;
+}
+.pmsg-contact-info { flex: 1; min-width: 0; }
+.pmsg-contact-name { font-size: 15px; font-weight: 600; color: #fff; }
+.pmsg-contact-preview {
+    font-size: 13px; color: rgba(255,255,255,.45);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px;
+}
+.pmsg-contact-meta { text-align: right; font-size: 11px; color: rgba(255,255,255,.4); flex-shrink: 0; }
+.pmsg-unread-dot { width: 10px; height: 10px; border-radius: 50%; background: #007AFF; margin-top: 4px; margin-left: auto; }
+
+.pmsg-chat-header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; border-bottom: 1px solid rgba(255,255,255,.08); flex-shrink: 0;
+}
+.pmsg-back-btn {
+    background: none; border: none; color: #007AFF; font-size: 22px;
+    cursor: pointer; padding: 0 4px; display: flex; align-items: center;
+}
+.pmsg-chat-title { font-size: 15px; font-weight: 600; }
+.pmsg-chat-subtitle { font-size: 11px; color: rgba(255,255,255,.4); }
+
+.pmsg-messages {
+    flex: 1; overflow-y: auto; padding: 10px 14px;
+    display: flex; flex-direction: column; gap: 4px;
+}
+.pmsg-bubble-wrap { display: flex; flex-direction: column; max-width: 75%; }
+.pmsg-bubble-wrap.outgoing { align-self: flex-end; align-items: flex-end; }
+.pmsg-bubble-wrap.incoming { align-self: flex-start; align-items: flex-start; }
+.pmsg-bubble {
+    padding: 9px 13px; border-radius: 18px;
+    font-size: 15px; line-height: 1.45; word-break: break-word;
+}
+.pmsg-bubble.outgoing { background: #007AFF; color: #fff; border-bottom-right-radius: 4px; }
+.pmsg-bubble.incoming { background: #1c1c1e; color: #fff; border-bottom-left-radius: 4px; }
+.pmsg-bubble-time { font-size: 10px; color: rgba(255,255,255,.35); margin-top: 2px; padding: 0 2px; }
+.pmsg-bubble-img { max-width: 220px; border-radius: 14px; display: block; cursor: pointer; }
+.pmsg-bubble-img-wrap { position: relative; display: inline-block; }
+
+.pmsg-typing { display: flex; align-items: center; gap: 4px; padding: 10px 14px; color: rgba(255,255,255,.4); font-size: 13px; }
+.pmsg-typing-dots { display: flex; gap: 3px; }
+.pmsg-typing-dots span {
+    width: 5px; height: 5px; border-radius: 50%; background: rgba(255,255,255,.4);
+    animation: pmsg-dot-bounce 1.2s ease-in-out infinite;
+}
+.pmsg-typing-dots span:nth-child(2) { animation-delay: .2s; }
+.pmsg-typing-dots span:nth-child(3) { animation-delay: .4s; }
+@keyframes pmsg-dot-bounce { 0%,80%,100% { transform: scale(.6); opacity:.4 } 40% { transform: scale(1); opacity:1 } }
+
+.pmsg-input-row {
+    display: flex; align-items: flex-end; gap: 8px;
+    padding: 10px 14px; border-top: 1px solid rgba(255,255,255,.08); flex-shrink: 0;
+}
+.pmsg-input-field {
+    flex: 1; background: #1c1c1e; border: 1px solid rgba(255,255,255,.12);
+    border-radius: 20px; padding: 9px 14px; color: #fff; font-size: 15px;
+    font-family: inherit; resize: none; outline: none; max-height: 100px;
+    overflow-y: auto; line-height: 1.4; box-sizing: border-box;
+}
+.pmsg-input-field::placeholder { color: rgba(255,255,255,.35); }
+.pmsg-send-btn {
+    width: 36px; height: 36px; border-radius: 50%; background: #007AFF;
+    border: none; cursor: pointer; display: flex; align-items: center;
+    justify-content: center; flex-shrink: 0; transition: background .15s, transform .15s;
+}
+.pmsg-send-btn:hover { background: #0066dd; }
+.pmsg-send-btn:active { transform: scale(.92); }
+.pmsg-send-btn svg { width: 16px; height: 16px; fill: #fff; }
+
+.pmsg-settings-panel { padding: 14px 16px; overflow-y: auto; flex: 1; }
+.pmsg-set-header { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+.pmsg-set-title { font-size: 18px; font-weight: 700; }
+.pmsg-set-section { font-size: 11px; text-transform: uppercase; letter-spacing: 1.2px; color: #007AFF; font-weight: 700; margin: 16px 0 8px; }
+.pmsg-set-field { margin-bottom: 8px; }
+.pmsg-set-field span { display: block; font-size: 12px; color: rgba(255,255,255,.55); margin-bottom: 4px; }
+.pmsg-set-input {
+    width: 100%; background: #1c1c1e; border: 1px solid rgba(255,255,255,.1);
+    border-radius: 10px; padding: 8px 12px; color: #fff; font-size: 13px;
+    font-family: inherit; outline: none; box-sizing: border-box;
+}
+.pmsg-set-input:focus { border-color: rgba(0,122,255,.5); }
+.pmsg-set-btn {
+    padding: 8px 14px; background: rgba(0,122,255,.18);
+    border: 1px solid rgba(0,122,255,.35); border-radius: 10px;
+    color: #007AFF; font-size: 12px; font-weight: 600; cursor: pointer;
+    font-family: inherit; transition: background .15s; display: inline-block; margin-top: 6px;
+}
+.pmsg-set-btn:hover { background: rgba(0,122,255,.28); }
+.pmsg-set-hint { font-size: 10.5px; color: rgba(255,255,255,.35); font-style: italic; margin-bottom: 8px; line-height: 1.4; }
+.pmsg-set-status { font-size: 10px; font-weight: 600; margin-left: 6px; padding: 2px 6px; border-radius: 6px; }
+.pmsg-set-status.ok { color: #30d158; background: rgba(48,209,88,.12); }
+.pmsg-set-status.warn { color: #ffd60a; background: rgba(255,214,10,.1); }
+.pmsg-set-status.err { color: #ff453a; background: rgba(255,69,58,.1); }
+
+.phonemsg-hidden { display: none !important; }
+.pmsg-empty { padding: 60px 20px; text-align: center; color: rgba(255,255,255,.45); font-size: 14px; line-height: 1.6; }
+.pmsg-empty-icon { font-size: 40px; margin-bottom: 12px; opacity: .4; }
+
+@media (max-width: 500px) {
+    .pmsg-phone-frame { width: 100% !important; max-width: 100% !important; height: 100% !important; max-height: 100% !important; border-radius: 0 !important; }
+}
+
+/* ═══════════════════════════════════════════
    SPARK DATING APP — стили
    ═══════════════════════════════════════════ */
 
