@@ -1,537 +1,657 @@
-// ui.js — интерфейс PhoneMSG
+// ═══════════════════════════════════════════
+// UI — iMessage интерфейс
+// ═══════════════════════════════════════════
 
-import {
-    getConversation, getContacts, getSettings, saveSettings,
-    getCustomAvatar, setCustomAvatar, clearCustomAvatar
-} from './state.js';
+import { loadState, save, pushMessage, updateMessage, deleteMessage, getSettings, saveSettings, resetState, getUnreadCount } from './state.js';
+import { generateCharReply, regenerateChatImage, captionUserImage, syncToMainChat, clearMainChatInjection } from './engine.js';
 import { fetchModels, isExtraLLMConfigured, isImageApiConfigured } from './api.js';
-import { getActiveLorebookName } from './engine.js';
 
-let currentView = 'list';
-let currentContactId = null;
+// ── SVG иконки ──
+const ICONS = {
+    back: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M15.4 7.4L14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg>',
+    send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2z"/></svg>',
+    gear: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M19.4 13a7.5 7.5 0 000-2l2.1-1.6-2-3.4L17 7a7.5 7.5 0 00-1.7-1L15 3.5h-4L10.7 6a7.5 7.5 0 00-1.7 1l-2.5-1-2 3.4L6.6 11a7.5 7.5 0 000 2l-2.1 1.6 2 3.4L9 17a7.5 7.5 0 001.7 1l.3 2.5h4l.3-2.5a7.5 7.5 0 001.7-1l2.5 1 2-3.4-2.1-1.6zM13 16a4 4 0 110-8 4 4 0 010 8z"/></svg>',
+    paperclip: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M16.5 6v11.5a4 4 0 11-8 0V5a2.5 2.5 0 015 0v10.5a1 1 0 11-2 0V6H10v9.5a2.5 2.5 0 005 0V5a4 4 0 10-8 0v12.5a5.5 5.5 0 0011 0V6h-1.5z"/></svg>',
+    camera: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 15.2A3.2 3.2 0 1 0 12 8.8a3.2 3.2 0 0 0 0 6.4zm7-12H2a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h20a2 2 0 0 0 2-2V7l-5-4z"/></svg>',
+    refresh: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.65 6.35A8 8 0 1019.73 15H17.6a6 6 0 11-1.37-7.2L13 11h7V4l-2.35 2.35z"/></svg>',
+    phone: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/></svg>',
+    videocam: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M17 10.5V7c0-.6-.4-1-1-1H4c-.6 0-1 .4-1 1v10c0 .6.4 1 1 1h12c.6 0 1-.4 1-1v-3.5l4 4v-11l-4 4z"/></svg>',
+    info: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>',
+    trash: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 3v1H4v2h1v13c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V6h1V4h-5V3H9zm0 5h2v9H9V8zm4 0h2v9h-2V8z"/></svg>',
+    checkmark: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>',
+    delivered: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M18 7l-1.41-1.41-6.34 6.34 1.41 1.41L18 7zm4.24-1.41L11.66 16.17 7.48 12l-1.41 1.41L11.66 19l12-12-1.42-1.41zM.41 13.41L6 19l1.41-1.41L1.83 12 .41 13.41z"/></svg>',
+};
 
-export function setView(v) { currentView = v; }
-export function getView() { return currentView; }
-export function setCurrentContactId(id) { currentContactId = id; }
-export function getCurrentContactId() { return currentContactId; }
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-export function filterVisibleText(text) {
-    if (!text) return '';
-    return String(text)
-        .replace(/<(think|thinking|reasoning)[^>]*>[\s\S]*?<\/\1>/gi, '')
-        .replace(/<horae[\s\S]*?<\/horae>/gi, '')
-        .replace(/<horaeevent[\s\S]*?<\/horaeevent>/gi, '')
-        .replace(/\[телефон:[^\]]+\]\s*/gi, '')
-        .replace(/\[контакт:[^\]]+\]\s*/gi, '')
-        .replace(/\[IMG:[^\]]+\]\s*/gi, '')
-        .split('\n').filter(line => {
-            const l = line.trim().toLowerCase();
-            if (!l) return true;
-            return !(
-                l.startsWith('event:') || l.startsWith('time:') || l.startsWith('npc:') ||
-                l.startsWith('location:') || l.startsWith('atmosphere:') ||
-                l.startsWith('affection:') || l.startsWith('character:') ||
-                (/^[a-z_]+:/.test(l) && l.includes('|'))
-            );
-        }).join('\n').trim();
+const formatTime = (ts) => {
+    if (!ts) return '';
+    const d = new Date(ts);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+
+const formatDate = (ts) => {
+    if (!ts) return '';
+    const d = new Date(ts);
+    const now = new Date();
+    const startOf = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const dayDiff = Math.round((startOf(now) - startOf(d)) / 86400000);
+    if (dayDiff === 0) return 'Сегодня';
+    if (dayDiff === 1) return 'Вчера';
+    const months = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+    return `${d.getDate()} ${months[d.getMonth()]}${d.getFullYear() !== now.getFullYear() ? ' ' + d.getFullYear() : ''}`;
+};
+
+const sameDay = (a, b) => {
+    if (!a || !b) return false;
+    const x = new Date(a), y = new Date(b);
+    return x.getFullYear() === y.getFullYear() && x.getMonth() === y.getMonth() && x.getDate() === y.getDate();
+};
+
+const hhmm = () => { const d = new Date(); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+
+// ── Аватар персонажа ──
+function charAvatarHTML(size = 36, cls = '') {
+    const settings = getSettings();
+    const s = loadState();
+    const charName = s.charName || '?';
+    const initial = charName[0] || '?';
+
+    // Попробовать аватарку из ST
+    let stAvatarUrl = '';
+    try {
+        const c = (typeof SillyTavern?.getContext === 'function') ? SillyTavern.getContext() : {};
+        if (c.characters && c.characterId != null) {
+            const char = c.characters[c.characterId];
+            if (char?.avatar && char.avatar !== 'none') {
+                stAvatarUrl = `/thumbnail?type=avatar&file=${encodeURIComponent(char.avatar)}`;
+            }
+        }
+    } catch {}
+
+    const avatarSrc = settings.charAvatar || stAvatarUrl || '';
+    const style = `width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;flex-shrink:0;${cls}`;
+    if (avatarSrc) {
+        return `<img src="${esc(avatarSrc)}" style="${style}" onerror="this.style.display='none';this.nextSibling.style.display='flex'" alt="">
+                <div style="${style};display:none;background:var(--imsg-bubble-in);align-items:center;justify-content:center;font-weight:600;font-size:${Math.round(size*0.4)}px;color:var(--imsg-text)">${esc(initial)}</div>`;
+    }
+    return `<div style="${style};background:var(--imsg-bubble-in);display:flex;align-items:center;justify-content:center;font-weight:600;font-size:${Math.round(size*0.4)}px;color:var(--imsg-text)">${esc(initial)}</div>`;
 }
 
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => (
-    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
-));
-
-function avatarHTML(contact, size = 44) {
-    const color = contact.color || '#007AFF';
-    const initial = (contact.name || '?').charAt(0).toUpperCase();
-    const custom = getCustomAvatar(contact.id);
-    const src = custom || contact.avatar || null;
-
-    if (src) {
-        return `<div class="pmsg-avatar" style="width:${size}px;height:${size}px;border-radius:50%;overflow:hidden;flex-shrink:0;">
-            <img src="${esc(src)}" style="width:100%;height:100%;object-fit:cover;display:block;">
-        </div>`;
-    }
-    const fontSize = Math.floor(size * 0.45);
-    return `<div class="pmsg-avatar" style="background:${esc(color)};width:${size}px;height:${size}px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:${fontSize}px;font-weight:600;flex-shrink:0;">
-        ${esc(initial)}
-    </div>`;
-}
-
-// ── Пузырёк с картинкой (статический или «генерируется») ────────────────────
-function imageBubbleHTML(msg, isMe = false, contactId = '') {
-    const colorClass = isMe ? 'pmsg-bubble-me' : 'pmsg-bubble-them';
-
-    if (msg._generating) {
-        return `<div class="pmsg-image-wrap ${colorClass}" data-gen-id="${esc(msg._genId || '')}">
-            <div class="pmsg-img-spinner">
-                <span></span><span></span><span></span>
-            </div>
-            <div style="font-size:11px;opacity:0.6;margin-top:4px;padding:0 8px 6px;">генерирую фото...</div>
-        </div>`;
-    }
-
-    if (!msg.imageUrl && !msg.image) {
-        // Ошибка / пустое — показываем текст ошибки
-        const errText = msg.text || '[фото не загрузилось]';
-        return `<div class="pmsg-bubble ${colorClass}" data-gen-id="${esc(msg._genId || '')}">${esc(errText)}</div>`;
-    }
-
-    const src = msg.imageUrl || msg.image || '';
-    const caption = filterVisibleText(msg.caption || msg.text || '');
-    const genId = msg._genId || '';
-    const prompt = msg._imgPrompt || '';
-
-    return `<div class="pmsg-image-wrap ${colorClass}" data-gen-id="${esc(genId)}" style="border-radius:18px;overflow:hidden;max-width:220px;">
-        <img class="pmsg-image" src="${esc(src)}" loading="lazy"
-             style="width:100%;display:block;cursor:pointer;"
-             onclick="window.open('${esc(src)}','_blank')">
-        ${caption ? `<div class="pmsg-image-caption">${esc(caption)}</div>` : ''}
-        ${(!isMe && genId && prompt) ? `
-        <div style="display:flex;justify-content:flex-end;padding:2px 6px 4px;">
-            <button class="pmsg-regen-btn" data-action="regen-image"
-                data-contact-id="${esc(contactId)}"
-                data-gen-id="${esc(genId)}"
-                data-prompt="${esc(prompt)}"
-                title="Перегенерировать">↺</button>
-        </div>` : ''}
-    </div>`;
-}
-
-export function renderContactList(contacts) {
-    const activeLb = getActiveLorebookName();
-    const lbInfo = activeLb
-        ? `<div class="pmsg-lb-info">📚 ${esc(activeLb)}</div>`
-        : `<div class="pmsg-lb-info pmsg-warn">⚠ Лорбук не привязан</div>`;
-
-    if (!contacts.length) {
-        return `
-        <div class="pmsg-header">
-            <div class="pmsg-header-title">Сообщения</div>
-            <button class="pmsg-settings-btn" data-action="open-settings">⚙</button>
-        </div>
-        ${lbInfo}
-        <div class="pmsg-empty">
-            <div style="font-size:48px;margin-bottom:12px;">📱</div>
-            <div>Контакты не найдены</div>
-            <small>Добавь запись в лорбук с "phone_contact" в поле comment.</small>
-            <button class="pmsg-btn" data-action="reload-contacts" style="margin-top:16px;">Обновить</button>
-        </div>`;
-    }
-
-    const items = contacts.map(c => `
-        <div class="pmsg-contact-row" data-id="${esc(c.id)}">
-            ${avatarHTML(c, 44)}
-            <div class="pmsg-contact-info">
-                <div class="pmsg-contact-name">${c.source === 'chat' ? '💬 ' : ''}${esc(c.name)}</div>
-                <div class="pmsg-contact-preview">${esc(getLastMessagePreview(c.id))}</div>
-            </div>
-            <div class="pmsg-contact-time">${esc(getLastTime(c.id))}</div>
-        </div>`).join('');
-
+// ── Шапка iMessage ──
+function renderHeader() {
+    const s = loadState();
+    const charName = esc(s.charName || 'Персонаж');
     return `
-        <div class="pmsg-header">
-            <div class="pmsg-header-title">Сообщения</div>
-            <button class="pmsg-settings-btn" data-action="open-settings">⚙</button>
+    <div class="imsg-status-bar">
+        <span>${hhmm()}</span>
+        <div style="display:flex;gap:4px;align-items:center;font-size:11px;opacity:.7">
+            <span>●●●</span>
+            <span>WiFi</span>
+            <span>🔋</span>
+            <button class="imsg-close-btn" data-imsg-action="close-app" title="закрыть">×</button>
         </div>
-        ${lbInfo}
-        <div class="pmsg-contact-list">${items}</div>`;
+    </div>
+    <div class="imsg-header">
+        <button class="imsg-header-back" data-imsg-action="close-app">${ICONS.back}</button>
+        <div class="imsg-header-center">
+            <div class="imsg-header-avatar">${charAvatarHTML(36)}</div>
+            <div class="imsg-header-name">${charName}</div>
+        </div>
+        <div class="imsg-header-actions">
+            <button class="imsg-icon-btn" title="настройки" data-imsg-action="view-settings">${ICONS.gear}</button>
+        </div>
+    </div>`;
 }
 
-function getLastMessagePreview(npcId) {
-    const conv = getConversation(npcId);
-    if (!conv.length) return 'Нет сообщений';
-    const last = conv[conv.length - 1];
-    if (last.type === 'image') return last._generating ? '⏳ генерирует фото...' : '📷 Фото';
-    const text = filterVisibleText(last.text || '');
-    return text.slice(0, 35) + (text.length > 35 ? '…' : '');
-}
+// ── Рендер сообщений ──
+function renderMessages() {
+    const s = loadState();
+    const msgs = s.messages || [];
+    if (!msgs.length) {
+        return `<div class="imsg-empty">Начните переписку</div>`;
+    }
+    return msgs.map((m, idx) => {
+        const prev = idx > 0 ? msgs[idx - 1] : null;
+        const dateSep = (!prev || !sameDay(prev.ts, m.ts))
+            ? `<div class="imsg-date-sep">${formatDate(m.ts)}</div>` : '';
 
-function getLastTime(npcId) {
-    const conv = getConversation(npcId);
-    return conv.length ? conv[conv.length - 1].time : '';
-}
+        const isUser = m.from === 'user';
+        const cls = isUser ? 'imsg-bubble imsg-bubble-out' : 'imsg-bubble imsg-bubble-in';
+        const delCls = m.deleted ? ' imsg-bubble-deleted' : '';
 
-export function renderChat(contacts, npcId) {
-    const contact = contacts.find(c => c.id === npcId);
-    if (!contact) return '<div class="pmsg-empty">Контакт не найден</div>';
+        let content = '';
 
-    const messages = getConversation(npcId);
-    const c = (typeof SillyTavern?.getContext === 'function') ? SillyTavern.getContext() : {};
-    const userName = c.name1 || 'Me';
-
-    const bubbles = messages.map(m => {
-        const isMe = m.sender === userName;
-        let inner = '';
-
-        if (m.type === 'image' || m._generating || m._imgPrompt) {
-            inner = imageBubbleHTML(m, isMe, npcId);
-        } else {
-            const visibleText = filterVisibleText(m.text || '');
-            if (!visibleText) return '';
-            inner = `<div class="pmsg-bubble ${isMe ? 'pmsg-bubble-me' : 'pmsg-bubble-them'}">${esc(visibleText)}</div>`;
+        // Изображение
+        if (m.image) {
+            const regenBtn = (!isUser && m._imgPrompt)
+                ? `<button class="imsg-regen-btn" data-imsg-action="regen-image" data-imsg-ts="${m.ts}" title="перегенерировать">${ICONS.refresh}</button>`
+                : '';
+            content += `<div class="imsg-img-wrap">
+                <img src="${esc(m.image)}" class="imsg-img" data-imsg-action="zoom-image" data-imsg-src="${esc(m.image)}" alt="">
+                ${regenBtn}
+            </div>`;
+        } else if (m._generating) {
+            content += `<div class="imsg-img-placeholder">📷 генерируется…</div>`;
+        } else if (!isUser && m._imgPrompt && !m.image && !m._generating) {
+            content += `<button class="imsg-regen-failed" data-imsg-action="regen-image" data-imsg-ts="${m.ts}">${ICONS.refresh} повторить</button>`;
         }
 
-        return `<div class="pmsg-bubble-wrap ${isMe ? 'pmsg-me' : 'pmsg-them'}">
-            ${!isMe ? avatarHTML(contact, 28) : ''}
-            <div class="pmsg-msg-content">
-                ${inner}
-                <div class="pmsg-time">${esc(m.time)}</div>
+        // Текст
+        if (m.text) {
+            content += `<span class="imsg-bubble-text">${esc(m.text)}</span>`;
+        }
+
+        // Время + доставлено (только последнее от юзера)
+        const isLastUser = isUser && (idx === msgs.length - 1 || msgs.slice(idx + 1).every(x => x.from !== 'user'));
+        const timeStr = formatTime(m.ts);
+        const timeBlock = timeStr ? `<div class="imsg-bubble-time ${isUser ? 'imsg-bubble-time-out' : ''}">${timeStr}${isLastUser ? ` ${ICONS.delivered}` : ''}</div>` : '';
+
+        // Кнопка удалить (на своих сообщениях)
+        const deleteBtn = isUser && !m.deleted
+            ? `<button class="imsg-delete-btn" data-imsg-action="delete-msg" data-imsg-ts="${m.ts}" title="удалить">${ICONS.trash}</button>`
+            : '';
+
+        const fromMain = m._fromMain ? ' <span class="imsg-from-main" title="из основного чата">↩</span>' : '';
+
+        return `${dateSep}
+        <div class="imsg-msg-row ${isUser ? 'imsg-msg-row-out' : 'imsg-msg-row-in'}">
+            ${!isUser ? `<div class="imsg-msg-avatar">${charAvatarHTML(28)}</div>` : ''}
+            <div class="imsg-msg-col">
+                <div class="${cls}${delCls}">${content}</div>
+                ${timeBlock}${fromMain}
             </div>
+            ${isUser ? deleteBtn : ''}
         </div>`;
-    }).filter(Boolean).join('');
+    }).join('');
+}
 
-    const customAvatar = getCustomAvatar(contact.id);
+// ── Основной чат ──
+function viewChat() {
+    const s = loadState();
+    const isTyping = s.__typing;
+    const typingBlock = isTyping ? `
+    <div class="imsg-msg-row imsg-msg-row-in">
+        <div class="imsg-msg-avatar">${charAvatarHTML(28)}</div>
+        <div class="imsg-typing-bubble"><span></span><span></span><span></span></div>
+    </div>` : '';
 
     return `
-        <div class="pmsg-header">
-            <button class="pmsg-back" data-action="back-to-list">‹</button>
-            ${avatarHTML(contact, 32)}
-            <div class="pmsg-header-name">${esc(contact.name)}</div>
-            <label class="pmsg-settings-btn" title="Загрузить аватар" style="cursor:pointer;">
-                🖼<input type="file" accept="image/*" data-avatar-upload="${esc(contact.id)}" style="display:none">
+    <div class="imsg-app">
+        ${renderHeader()}
+        <div class="imsg-body" id="imsg-body">
+            ${renderMessages()}
+            ${typingBlock}
+        </div>
+        <div class="imsg-input-bar">
+            <label class="imsg-attach-btn" title="прикрепить фото">
+                ${ICONS.camera}
+                <input type="file" accept="image/*" data-imsg-file-input style="display:none">
             </label>
-            ${customAvatar ? `<button class="pmsg-settings-btn" data-action="clear-avatar" data-id="${esc(contact.id)}">✕</button>` : ''}
+            <div class="imsg-input-wrap">
+                <textarea class="imsg-input" placeholder="iMessage" rows="1" id="imsg-input"></textarea>
+            </div>
+            <button class="imsg-send-btn" data-imsg-action="send-msg" id="imsg-send">${ICONS.send}</button>
         </div>
-        <div class="pmsg-messages" id="pmsg-messages">
-            ${bubbles || '<div class="pmsg-empty-chat">Нет сообщений</div>'}
-        </div>
-        <div id="pmsg-attach-preview" style="display:none;padding:6px 12px;align-items:center;gap:6px;background:rgba(0,0,0,0.08);">
-            <span id="pmsg-attach-name" style="font-size:12px;opacity:0.8;flex:1;"></span>
-            <button id="pmsg-attach-clear" style="background:none;border:none;cursor:pointer;font-size:14px;opacity:0.7;">✕</button>
-        </div>
-        <div class="pmsg-input-bar">
-            <label class="pmsg-attach-btn" title="Прикрепить фото" style="cursor:pointer;padding:0 8px;display:flex;align-items:center;opacity:0.65;flex-shrink:0;">
-                <svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22">
-                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
-                </svg>
-                <input type="file" id="pmsg-attach-input" accept="image/*" style="display:none">
-            </label>
-            <input type="text" id="pmsg-input" class="pmsg-input" placeholder="iMessage" maxlength="500" autocomplete="off">
-            <button id="pmsg-send-btn" class="pmsg-send-btn">
-                <svg viewBox="0 0 24 24" fill="white" width="16" height="16">
-                    <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
-                </svg>
-            </button>
-        </div>`;
-}
-
-export function bindChatEvents(contact, onSend) {
-    const sendBtn = document.getElementById('pmsg-send-btn');
-    const input = document.getElementById('pmsg-input');
-    const attachInput = document.getElementById('pmsg-attach-input');
-    const attachPreview = document.getElementById('pmsg-attach-preview');
-    const attachName = document.getElementById('pmsg-attach-name');
-    const attachClear = document.getElementById('pmsg-attach-clear');
-    const avatarInput = document.querySelector(`[data-avatar-upload="${contact.id}"]`);
-
-    let pendingAttach = null;
-
-    if (attachInput) {
-        attachInput.onchange = (e) => {
-            const file = e.target.files?.[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = () => {
-                pendingAttach = String(reader.result || '');
-                if (attachPreview) attachPreview.style.display = 'flex';
-                if (attachName) attachName.textContent = `📎 ${file.name}`;
-                attachInput.value = '';
-            };
-            reader.readAsDataURL(file);
-        };
-    }
-
-    if (attachClear) {
-        attachClear.onclick = () => {
-            pendingAttach = null;
-            if (attachPreview) attachPreview.style.display = 'none';
-        };
-    }
-
-    if (sendBtn && input) {
-        const doSend = () => {
-            const text = input.value.trim();
-            if (!text && !pendingAttach) return;
-            input.value = '';
-            const img = pendingAttach;
-            pendingAttach = null;
-            if (attachPreview) attachPreview.style.display = 'none';
-            onSend(contact, text, img);
-        };
-        sendBtn.onclick = doSend;
-        input.onkeydown = (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); }
-        };
-    }
-
-    if (avatarInput) {
-        avatarInput.onchange = async (e) => {
-            const file = e.target.files?.[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = () => {
-                setCustomAvatar(contact.id, String(reader.result || ''));
-                const screen = document.getElementById('phonemsg-screen');
-                if (screen) {
-                    screen.innerHTML = renderChat(getContacts(), contact.id);
-                    bindChatEvents(contact, onSend);
-                }
-            };
-            reader.readAsDataURL(file);
-        };
-    }
-
-    const msgs = document.getElementById('pmsg-messages');
-    if (msgs) requestAnimationFrame(() => { msgs.scrollTop = msgs.scrollHeight; });
-}
-
-export function appendBubble(npcId, msg, userName, genId = null) {
-    const msgs = document.getElementById('pmsg-messages');
-    if (!msgs) return;
-    const isMe = msg.sender === userName;
-    const contacts = getContacts();
-    const contact = contacts.find(c => c.id === npcId);
-
-    const div = document.createElement('div');
-    div.className = `pmsg-bubble-wrap ${isMe ? 'pmsg-me' : 'pmsg-them'}`;
-
-    let inner = '';
-    // Картинка: либо уже есть imageUrl, либо _generating, либо есть _imgPrompt (ждём генерацию)
-    if (msg.type === 'image' || msg._generating || msg._imgPrompt) {
-        const msgWithGenId = { ...msg, _genId: genId || msg._genId };
-        inner = imageBubbleHTML(msgWithGenId, isMe, npcId);
-    } else {
-        const visibleText = filterVisibleText(msg.text || '');
-        if (!visibleText) return;
-        inner = `<div class="pmsg-bubble ${isMe ? 'pmsg-bubble-me' : 'pmsg-bubble-them'}">${esc(visibleText)}</div>`;
-    }
-
-    div.innerHTML = `
-        ${!isMe && contact ? avatarHTML(contact, 28) : ''}
-        <div class="pmsg-msg-content">
-            ${inner}
-            <div class="pmsg-time">${esc(msg.time)}</div>
-        </div>`;
-    msgs.appendChild(div);
-    requestAnimationFrame(() => { msgs.scrollTop = msgs.scrollHeight; });
-}
-
-// ── Обновить пузырёк картинки по genId (без перерендера всего чата) ──────────
-export function updateBubbleImage(contactId, genId, imageUrl, isGenerating, errorText = '') {
-    const el = document.querySelector(`[data-gen-id="${genId}"]`);
-    if (!el) return;
-
-    const isMe = el.classList.contains('pmsg-bubble-me');
-    const colorClass = isMe ? 'pmsg-bubble-me' : 'pmsg-bubble-them';
-
-    if (isGenerating) {
-        el.innerHTML = `<div class="pmsg-img-spinner"><span></span><span></span><span></span></div>
-            <div style="font-size:11px;opacity:0.6;margin-top:4px;padding:0 8px 6px;">генерирую фото...</div>`;
-        return;
-    }
-
-    if (errorText) {
-        el.outerHTML = `<div class="pmsg-bubble ${colorClass}" data-gen-id="${esc(genId)}">${esc(errorText)}</div>`;
-        return;
-    }
-
-    if (imageUrl) {
-        const prompt = el.dataset?.prompt || '';
-        el.innerHTML = `
-            <img class="pmsg-image" src="${esc(imageUrl)}" loading="lazy"
-                 style="width:100%;display:block;cursor:pointer;"
-                 onclick="window.open('${esc(imageUrl)}','_blank')">
-            ${!isMe && prompt ? `
-            <div style="display:flex;justify-content:flex-end;padding:2px 6px 4px;">
-                <button class="pmsg-regen-btn" data-action="regen-image"
-                    data-contact-id="${esc(contactId)}"
-                    data-gen-id="${esc(genId)}"
-                    data-prompt="${esc(prompt)}"
-                    title="Перегенерировать">↺</button>
-            </div>` : ''}`;
-        el.style.cssText = 'border-radius:18px;overflow:hidden;max-width:220px;';
-        // Скроллим вниз
-        const msgs = document.getElementById('pmsg-messages');
-        if (msgs) requestAnimationFrame(() => { msgs.scrollTop = msgs.scrollHeight; });
-    }
-}
-
-export function showTyping() {
-    const msgs = document.getElementById('pmsg-messages');
-    if (!msgs) return;
-    const div = document.createElement('div');
-    div.id = 'pmsg-typing';
-    div.className = 'pmsg-bubble-wrap pmsg-them';
-    div.innerHTML = `<div class="pmsg-bubble pmsg-bubble-them pmsg-typing-dots">
-        <span></span><span></span><span></span>
     </div>`;
-    msgs.appendChild(div);
-    requestAnimationFrame(() => { msgs.scrollTop = msgs.scrollHeight; });
 }
 
-export function hideTyping() {
-    document.getElementById('pmsg-typing')?.remove();
-}
+// ── Настройки ──
+function viewSettings() {
+    const settings = getSettings();
+    const s = loadState();
 
-export function renderSettings() {
-    const s = getSettings();
-    const llmStatus = isExtraLLMConfigured()
-        ? `<span class="pmsg-status ok">● подключен</span>`
-        : `<span class="pmsg-status err">● не настроен</span>`;
-    const imgStatus = isImageApiConfigured()
-        ? `<span class="pmsg-status ok">● готов</span>`
-        : `<span class="pmsg-status warn">● не настроен</span>`;
+    const llmOk = isExtraLLMConfigured();
+    const imgOk = isImageApiConfigured();
 
-    const llmModels = window.__phoneMsgLlmModels || [];
-    const llmModelOptions = llmModels.length
-        ? `<select class="pmsg-input" data-set-deep="extraApi.model">
-            ${llmModels.map(m => `<option value="${esc(m)}" ${m === s.extraApi.model ? 'selected' : ''}>${esc(m)}</option>`).join('')}
+    const llmModels = window.__imsgLlmModels || [];
+    const imgModels = window.__imsgImgModels || [];
+
+    const llmModelEl = llmModels.length
+        ? `<select class="imsg-set-input" data-imsg-set-deep="extraApi.model">
+            ${llmModels.map(m => `<option value="${esc(m)}" ${m === settings.extraApi.model ? 'selected' : ''}>${esc(m)}</option>`).join('')}
            </select>`
-        : `<input type="text" class="pmsg-input" data-set-deep="extraApi.model" value="${esc(s.extraApi.model)}" placeholder="gpt-4o-mini">`;
+        : `<input type="text" class="imsg-set-input" data-imsg-set-deep="extraApi.model" value="${esc(settings.extraApi.model)}" placeholder="или введи вручную">`;
 
-    const imgModels = window.__phoneMsgImgModels || [];
-    const imgModelOptions = imgModels.length
-        ? `<select class="pmsg-input" data-set-deep="imageApi.model">
+    const imgModelEl = imgModels.length
+        ? `<select class="imsg-set-input" data-imsg-set-deep="imageApi.model">
             <option value="">— не выбрано —</option>
-            ${imgModels.map(m => `<option value="${esc(m)}" ${m === s.imageApi.model ? 'selected' : ''}>${esc(m)}</option>`).join('')}
+            ${imgModels.map(m => `<option value="${esc(m)}" ${m === settings.imageApi.model ? 'selected' : ''}>${esc(m)}</option>`).join('')}
            </select>`
-        : `<input type="text" class="pmsg-input" data-set-deep="imageApi.model" value="${esc(s.imageApi.model)}" placeholder="dall-e-3, flux-pro, gemini-2.0-flash-exp">`;
+        : `<input type="text" class="imsg-set-input" data-imsg-set-deep="imageApi.model" value="${esc(settings.imageApi.model)}" placeholder="dall-e-3, flux-pro и т.д.">`;
 
-    const activeLb = getActiveLorebookName();
+    // Текущий аватар персонажа ST
+    let stAvatarUrl = '';
+    try {
+        const c = (typeof SillyTavern?.getContext === 'function') ? SillyTavern.getContext() : {};
+        if (c.characters && c.characterId != null) {
+            const char = c.characters[c.characterId];
+            if (char?.avatar && char.avatar !== 'none') {
+                stAvatarUrl = `/thumbnail?type=avatar&file=${encodeURIComponent(char.avatar)}`;
+            }
+        }
+    } catch {}
+
+    const charAvatarPreview = (settings.charAvatar || stAvatarUrl)
+        ? `<img src="${esc(settings.charAvatar || stAvatarUrl)}" style="width:60px;height:60px;border-radius:50%;object-fit:cover;margin-bottom:6px" alt="">`
+        : `<div style="width:60px;height:60px;border-radius:50%;background:var(--imsg-bubble-in);display:flex;align-items:center;justify-content:center;font-size:24px;margin-bottom:6px">${esc((s.charName || '?')[0])}</div>`;
 
     return `
-        <div class="pmsg-header">
-            <button class="pmsg-back" data-action="back-to-list">‹</button>
-            <div class="pmsg-header-name">Настройки</div>
+    <div class="imsg-app">
+        <div class="imsg-status-bar">
+            <span>${hhmm()}</span>
+            <div style="display:flex;gap:4px;align-items:center">
+                <button class="imsg-close-btn" data-imsg-action="close-app">×</button>
+            </div>
         </div>
-        <div class="pmsg-settings-body">
-            <h3 class="pmsg-set-section">Отображение</h3>
-            <label class="pmsg-set-field"><span>Режим</span>
-                <select class="pmsg-input" data-set="displayMode">
-                    <option value="floating" ${s.displayMode === 'floating' ? 'selected' : ''}>Плавающее окно</option>
-                    <option value="fullscreen" ${s.displayMode === 'fullscreen' ? 'selected' : ''}>На весь экран</option>
+        <div class="imsg-settings-header">
+            <button class="imsg-header-back" data-imsg-action="view-chat">${ICONS.back} Чат</button>
+            <span class="imsg-settings-title">Настройки</span>
+        </div>
+        <div class="imsg-body imsg-settings-body">
+
+            <div class="imsg-set-section">LLM API <span class="imsg-status-pill ${llmOk ? 'ok' : 'err'}">${llmOk ? '● подключён' : '● не настроен'}</span></div>
+            <div class="imsg-set-hint">Все запросы (ответы персонажа, генерация карточек) идут сюда. Основной API ST не трогается.</div>
+            <label class="imsg-set-field">
+                <span>Endpoint (без /v1)</span>
+                <input type="text" class="imsg-set-input" data-imsg-set-deep="extraApi.endpoint" value="${esc(settings.extraApi.endpoint)}" placeholder="https://api.openai.com">
+            </label>
+            <label class="imsg-set-field">
+                <span>API Key</span>
+                <input type="password" class="imsg-set-input" data-imsg-set-deep="extraApi.apiKey" value="${esc(settings.extraApi.apiKey)}" placeholder="sk-...">
+            </label>
+            <div class="imsg-set-row">
+                <button class="imsg-set-btn" data-imsg-action="fetch-llm-models">Загрузить модели</button>
+            </div>
+            <label class="imsg-set-field">
+                <span>Модель</span>
+                ${llmModelEl}
+            </label>
+            <div class="imsg-set-row" style="gap:8px">
+                <label class="imsg-set-field" style="flex:1">
+                    <span>temperature</span>
+                    <input type="number" step="0.1" min="0" max="2" class="imsg-set-input" data-imsg-set-deep="extraApi.temperature" value="${settings.extraApi.temperature}">
+                </label>
+                <label class="imsg-set-field" style="flex:1">
+                    <span>max tokens</span>
+                    <input type="number" step="50" min="50" max="8000" class="imsg-set-input" data-imsg-set-deep="extraApi.maxTokens" value="${settings.extraApi.maxTokens}">
+                </label>
+            </div>
+
+            <div class="imsg-set-section">Image API <span class="imsg-status-pill ${imgOk ? 'ok' : 'warn'}">${imgOk ? '● готов' : '● fallback /sd'}</span></div>
+            <label class="imsg-set-field row">
+                <input type="checkbox" data-imsg-set="useSillyImagesConfig" ${settings.useSillyImagesConfig ? 'checked' : ''}>
+                <span>Использовать настройки расширения sillyimages если своё не задано</span>
+            </label>
+            <label class="imsg-set-field">
+                <span>Image API тип</span>
+                <select class="imsg-set-input" data-imsg-set-deep="imageApi.apiType">
+                    <option value="openai" ${settings.imageApi.apiType !== 'gemini' ? 'selected' : ''}>OpenAI-compatible</option>
+                    <option value="gemini" ${settings.imageApi.apiType === 'gemini' ? 'selected' : ''}>Gemini</option>
                 </select>
             </label>
-
-            <h3 class="pmsg-set-section">Лорбук с контактами</h3>
-            <label class="pmsg-set-field"><span>Источник</span>
-                <select class="pmsg-input" data-set="lorebookSource">
-                    <option value="chat" ${s.lorebookSource === 'chat' ? 'selected' : ''}>Из чата / карточки (авто)</option>
-                    <option value="named" ${s.lorebookSource === 'named' ? 'selected' : ''}>По имени</option>
-                </select>
+            <label class="imsg-set-field">
+                <span>Endpoint</span>
+                <input type="text" class="imsg-set-input" data-imsg-set-deep="imageApi.endpoint" value="${esc(settings.imageApi.endpoint)}" placeholder="https://api.openai.com">
             </label>
-            ${s.lorebookSource === 'named' ? `<label class="pmsg-set-field"><span>Имя лорбука</span>
-                <input type="text" class="pmsg-input" data-set="lorebookName" value="${esc(s.lorebookName)}">
-            </label>` : ''}
-            <div class="pmsg-hint">${activeLb ? `Активный: <b>${esc(activeLb)}</b>` : 'Лорбук не найден.'}</div>
-            <button class="pmsg-btn" data-action="reload-contacts">Обновить контакты</button>
-
-            <h3 class="pmsg-set-section">Мост с основным чатом</h3>
-            <label class="pmsg-set-field"><span class="pmsg-checkbox-field">
-                <input type="checkbox" data-set="bridgeEnabled" ${s.bridgeEnabled ? 'checked' : ''}>
-                Включить двунаправленный мост
-            </span></label>
-
-            <h3 class="pmsg-set-section">API для ответов НПС ${llmStatus}</h3>
-            <label class="pmsg-set-field"><span class="pmsg-checkbox-field">
-                <input type="checkbox" data-set="useMainApi" ${s.useMainApi ? 'checked' : ''}>
-                Использовать основной API SillyTavern
-            </span></label>
-            <div class="pmsg-hint">Выключи если хочешь Extra API (нужен для vision от юзера).</div>
-            <label class="pmsg-set-field"><span>Endpoint</span>
-                <input type="text" class="pmsg-input" data-set-deep="extraApi.endpoint" value="${esc(s.extraApi.endpoint)}" placeholder="https://api.openai.com">
+            <label class="imsg-set-field">
+                <span>API Key</span>
+                <input type="password" class="imsg-set-input" data-imsg-set-deep="imageApi.apiKey" value="${esc(settings.imageApi.apiKey)}" placeholder="sk-...">
             </label>
-            <label class="pmsg-set-field"><span>API Key</span>
-                <input type="password" class="pmsg-input" data-set-deep="extraApi.apiKey" value="${esc(s.extraApi.apiKey)}">
+            <div class="imsg-set-row">
+                <button class="imsg-set-btn" data-imsg-action="fetch-img-models">Загрузить модели</button>
+            </div>
+            <label class="imsg-set-field">
+                <span>Модель</span>
+                ${imgModelEl}
             </label>
-            <button class="pmsg-btn" data-action="fetch-llm-models">Загрузить модели</button>
-            <label class="pmsg-set-field"><span>Модель</span>${llmModelOptions}</label>
-
-            <h3 class="pmsg-set-section">Image API ${imgStatus}</h3>
-            <label class="pmsg-set-field"><span>Тип API</span>
-                <select class="pmsg-input" data-set-deep="imageApi.apiType">
-                    <option value="openai" ${s.imageApi.apiType === 'openai' ? 'selected' : ''}>OpenAI / совместимые</option>
-                    <option value="gemini" ${s.imageApi.apiType === 'gemini' ? 'selected' : ''}>Gemini (nano-banana)</option>
-                </select>
-            </label>
-            <label class="pmsg-set-field"><span class="pmsg-checkbox-field">
-                <input type="checkbox" data-set="useSillyImagesConfig" ${s.useSillyImagesConfig ? 'checked' : ''}>
-                Если пусто — брать из sillyimages
-            </span></label>
-            <label class="pmsg-set-field"><span class="pmsg-checkbox-field">
-                <input type="checkbox" data-set="useAvatarAsRef" ${s.useAvatarAsRef !== false ? 'checked' : ''}>
-                Использовать аватар как реф-изображение
-            </span></label>
-            <label class="pmsg-set-field"><span>Endpoint</span>
-                <input type="text" class="pmsg-input" data-set-deep="imageApi.endpoint" value="${esc(s.imageApi.endpoint)}">
-            </label>
-            <label class="pmsg-set-field"><span>API Key</span>
-                <input type="password" class="pmsg-input" data-set-deep="imageApi.apiKey" value="${esc(s.imageApi.apiKey)}">
-            </label>
-            <button class="pmsg-btn" data-action="fetch-img-models">Загрузить модели</button>
-            <label class="pmsg-set-field"><span>Модель</span>${imgModelOptions}</label>
-            <label class="pmsg-set-field"><span>Размер</span>
-                <select class="pmsg-input" data-set-deep="imageApi.size">
+            <label class="imsg-set-field">
+                <span>Размер</span>
+                <select class="imsg-set-input" data-imsg-set-deep="imageApi.size">
                     ${['512x512','768x768','1024x1024','1024x1536','1536x1024'].map(sz =>
-                        `<option value="${sz}" ${s.imageApi.size === sz ? 'selected' : ''}>${sz}</option>`
+                        `<option value="${sz}" ${settings.imageApi.size === sz ? 'selected':''}>${sz}</option>`
                     ).join('')}
                 </select>
             </label>
-            ${s.imageApi.apiType === 'gemini' ? `
-            <label class="pmsg-set-field"><span>Aspect ratio</span>
-                <input type="text" class="pmsg-input" data-set-deep="imageApi.aspectRatio" value="${esc(s.imageApi.aspectRatio || '1:1')}" placeholder="1:1, 9:16, 16:9">
-            </label>` : ''}
 
-            <h3 class="pmsg-set-section">Промпты для картинок</h3>
-            <div class="pmsg-hint">Prefix/Suffix добавляются к каждому промпту от НПС.</div>
-            <label class="pmsg-set-field"><span>Префикс</span>
-                <textarea class="pmsg-input" data-set="imagePromptPrefix" rows="2">${esc(s.imagePromptPrefix)}</textarea>
+            <div class="imsg-set-section">Промпты для картинок</div>
+            <label class="imsg-set-field">
+                <span>Префикс (стиль/качество)</span>
+                <textarea class="imsg-set-input" data-imsg-set="imagePromptPrefix" rows="2" placeholder="photorealistic, natural lighting, sharp focus">${esc(settings.imagePromptPrefix || '')}</textarea>
             </label>
-            <label class="pmsg-set-field"><span>Суффикс</span>
-                <textarea class="pmsg-input" data-set="imagePromptSuffix" rows="2">${esc(s.imagePromptSuffix)}</textarea>
+            <label class="imsg-set-field">
+                <span>Суффикс</span>
+                <textarea class="imsg-set-input" data-imsg-set="imagePromptSuffix" rows="2" placeholder="instagram aesthetic, cinematic">${esc(settings.imagePromptSuffix || '')}</textarea>
             </label>
-            <label class="pmsg-set-field"><span>Negative prompt</span>
-                <textarea class="pmsg-input" data-set="imageNegativePrompt" rows="2">${esc(s.imageNegativePrompt)}</textarea>
+            <label class="imsg-set-field">
+                <span>Negative prompt</span>
+                <textarea class="imsg-set-input" data-imsg-set="imageNegativePrompt" rows="2" placeholder="cartoon, blurry, watermark">${esc(settings.imageNegativePrompt || '')}</textarea>
             </label>
-
-            <h3 class="pmsg-set-section">Автосообщения</h3>
-            <div class="pmsg-hint">НПС пишут первыми, если давно не было активности.</div>
-            <label class="pmsg-set-field"><span class="pmsg-checkbox-field">
-                <input type="checkbox" data-set="autoMessagesEnabled" ${s.autoMessagesEnabled ? 'checked' : ''}>
-                Включить автосообщения
-            </span></label>
-            <label class="pmsg-set-field"><span>Молчание перед первым сообщением (мин)</span>
-                <input type="number" class="pmsg-input" data-set="autoMessageSilenceMin"
-                    value="${s.autoMessageSilenceMin ?? 30}" min="5" max="1440" step="5">
-            </label>
-            <label class="pmsg-set-field"><span>Кулдаун между автосообщениями (мин)</span>
-                <input type="number" class="pmsg-input" data-set="autoMessageCooldownMin"
-                    value="${s.autoMessageCooldownMin ?? 60}" min="10" max="1440" step="10">
+            <label class="imsg-set-field row">
+                <input type="checkbox" data-imsg-set="useAvatarAsRef" ${settings.useAvatarAsRef !== false ? 'checked' : ''}>
+                <span>Использовать аватар как reference при генерации фото в чате</span>
             </label>
 
-            <h3 class="pmsg-set-section">Опасная зона</h3>
-            <button class="pmsg-btn pmsg-danger" data-action="reset-chat">Сбросить переписки в этом чате</button>
-        </div>`;
+            <div class="imsg-set-section">Аватар персонажа</div>
+            <div style="display:flex;flex-direction:column;align-items:flex-start;gap:6px">
+                ${charAvatarPreview}
+                <label class="imsg-set-btn" style="cursor:pointer">
+                    Загрузить файл
+                    <input type="file" accept="image/*" data-imsg-avatar-upload style="display:none">
+                </label>
+                ${settings.charAvatar ? `<button class="imsg-set-btn danger" data-imsg-action="clear-char-avatar">Удалить загруженный</button>` : ''}
+            </div>
+            <div class="imsg-set-hint">Если не загружен — берётся аватар из карточки персонажа ST.</div>
+
+            <div class="imsg-set-section">Лорбук</div>
+            <div class="imsg-set-hint">Если к текущему чату или персонажу привязан лорбук — его содержимое автоматически передаётся персонажу как дополнительный контекст. Дополнительных настроек не требуется. Используется лорбук из значка 📕 в шапке ST, или поле «World» в карточке персонажа.</div>
+
+            <div class="imsg-set-section">Синк с основным чатом</div>
+            <label class="imsg-set-field row">
+                <input type="checkbox" data-imsg-set="injectIntoMain" ${settings.injectIntoMain ? 'checked' : ''}>
+                <span>Подмешивать переписку из телефона в основной чат ST</span>
+            </label>
+            <label class="imsg-set-field row">
+                <input type="checkbox" data-imsg-set="includePersonaDescription" ${settings.includePersonaDescription !== false ? 'checked' : ''}>
+                <span>Передавать описание персоны пользователя персонажу</span>
+            </label>
+            <div class="imsg-set-hint">Когда персонаж в основном чате «пишет в телефон» — сообщение автоматически появится в расширении.</div>
+
+            <div class="imsg-set-section">Картинки от персонажа</div>
+            <div class="imsg-set-hint">Персонаж может сам отправлять фото в переписке (когда это уместно по сюжету). Требует настроенного Image API.</div>
+            <label class="imsg-set-field row">
+                <input type="checkbox" data-imsg-set="allowCharImages" ${settings.allowCharImages !== false ? 'checked' : ''}>
+                <span>Разрешить персонажу отправлять фото</span>
+            </label>
+
+            <div class="imsg-set-section">Авто-сообщения</div>
+            <div class="imsg-set-hint">Персонаж сам напишет спустя указанное время, если ты не ответила.</div>
+            <label class="imsg-set-field row">
+                <input type="checkbox" data-imsg-set-deep="autoReply.enabled" ${settings.autoReply?.enabled ? 'checked' : ''}>
+                <span>Включить авто-сообщения</span>
+            </label>
+            <div class="imsg-set-row" style="gap:8px">
+                <label class="imsg-set-field" style="flex:1">
+                    <span>Мин. минут</span>
+                    <input type="number" min="1" max="1440" class="imsg-set-input" data-imsg-set-deep="autoReply.minMinutes" value="${settings.autoReply?.minMinutes ?? 15}">
+                </label>
+                <label class="imsg-set-field" style="flex:1">
+                    <span>Макс. минут</span>
+                    <input type="number" min="1" max="10080" class="imsg-set-input" data-imsg-set-deep="autoReply.maxMinutes" value="${settings.autoReply?.maxMinutes ?? 120}">
+                </label>
+            </div>
+            ${s.nextAutoTs ? `<div class="imsg-set-hint">Следующий авто-ответ: ~${formatTime(s.nextAutoTs)}</div>` : ''}
+
+            <div class="imsg-set-section">Опасная зона</div>
+            <button class="imsg-set-btn danger" data-imsg-action="reset-state">Очистить переписку в этом чате</button>
+
+        </div>
+    </div>`;
+}
+
+// ── Рендер ──
+export function render() {
+    const root = document.getElementById('imsg-modal-body');
+    if (!root) return;
+    const s = loadState();
+
+    const html = (s.view === 'settings') ? viewSettings() : viewChat();
+    root.innerHTML = html;
+
+    // Скролл вниз
+    requestAnimationFrame(() => {
+        const body = document.getElementById('imsg-body');
+        if (body) body.scrollTop = body.scrollHeight;
+    });
+
+    // Авто-ресайз textarea
+    const ta = document.getElementById('imsg-input');
+    if (ta) {
+        ta.addEventListener('input', () => {
+            ta.style.height = 'auto';
+            ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
+        });
+        ta.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleAction('send-msg', null, e);
+            }
+        });
+    }
+}
+
+export function updateFabBadge() {
+    const fab = document.getElementById('imsg-fab');
+    if (!fab) return;
+    const n = getUnreadCount();
+    let badge = fab.querySelector('.imsg-fab-badge');
+    if (n > 0) {
+        if (!badge) { badge = document.createElement('div'); badge.className = 'imsg-fab-badge'; fab.appendChild(badge); }
+        badge.textContent = n > 9 ? '9+' : String(n);
+    } else if (badge) {
+        badge.remove();
+    }
+}
+
+// ── Хелперы ──
+function fileToDataURL(file) {
+    return new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result);
+        r.onerror = rej;
+        r.readAsDataURL(file);
+    });
+}
+
+async function resizeImage(dataUrl, maxSize = 800) {
+    return new Promise(resolve => {
+        const img = new Image();
+        img.onload = () => {
+            let { width: w, height: h } = img;
+            if (w > maxSize || h > maxSize) {
+                if (w > h) { h = Math.round(h * maxSize / w); w = maxSize; }
+                else { w = Math.round(w * maxSize / h); h = maxSize; }
+            }
+            const c = document.createElement('canvas');
+            c.width = w; c.height = h;
+            c.getContext('2d').drawImage(img, 0, 0, w, h);
+            resolve(c.toDataURL('image/jpeg', 0.85));
+        };
+        img.onerror = () => resolve(dataUrl);
+        img.src = dataUrl;
+    });
+}
+
+function setDeep(obj, path, value) {
+    const parts = path.split('.');
+    let cur = obj;
+    for (let i = 0; i < parts.length - 1; i++) {
+        if (cur[parts[i]] === undefined) cur[parts[i]] = {};
+        cur = cur[parts[i]];
+    }
+    cur[parts[parts.length - 1]] = value;
+}
+
+function openZoom(src) {
+    const old = document.getElementById('imsg-zoom-overlay');
+    if (old) old.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'imsg-zoom-overlay';
+    overlay.innerHTML = `
+        <div class="imsg-zoom-scroll">
+            <img src="${src}" class="imsg-zoom-img" alt="">
+        </div>
+        <button class="imsg-zoom-close">✕</button>`;
+    const close = () => { overlay.remove(); document.removeEventListener('keydown', onKey); };
+    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    document.addEventListener('keydown', onKey);
+    overlay.querySelector('.imsg-zoom-close').addEventListener('click', close);
+    overlay.querySelector('.imsg-zoom-close').addEventListener('touchend', (e) => { e.preventDefault(); close(); });
+    overlay.addEventListener('click', (e) => { if (e.target === overlay || e.target.classList.contains('imsg-zoom-scroll')) close(); });
+    (document.documentElement || document.body).appendChild(overlay);
+}
+
+// ── Action handler ──
+export async function handleAction(action, _boyId, evt) {
+    const s = loadState();
+    const settings = getSettings();
+
+    if (action === 'zoom-image') {
+        const el = evt?.target?.closest?.('[data-imsg-src]');
+        const src = el?.getAttribute('data-imsg-src');
+        if (src) openZoom(src);
+        return;
+    }
+
+    if (action === 'close-app') {
+        const modal = document.getElementById('imsg-modal');
+        if (modal) modal.classList.remove('open');
+        return;
+    }
+
+    if (action === 'view-chat') {
+        s.view = 'chat'; save(); render(); return;
+    }
+
+    if (action === 'view-settings') {
+        s.view = 'settings'; save(); render(); return;
+    }
+
+    if (action === 'send-msg') {
+        const input = document.getElementById('imsg-input');
+        const text = input?.value?.trim();
+        if (!text) return;
+        input.value = '';
+        input.style.height = 'auto';
+        pushMessage({ from: 'user', text });
+        syncToMainChat();
+        s.__typing = true; save();
+        render();
+        try {
+            const n = await generateCharReply();
+            if (n > 0) updateFabBadge();
+        } catch (e) { console.error('[iMsg] send-msg reply failed:', e); }
+        s.__typing = false; save();
+        render();
+        return;
+    }
+
+    if (action === 'delete-msg') {
+        const el = evt?.target?.closest?.('[data-imsg-ts]');
+        const ts = el?.getAttribute('data-imsg-ts');
+        if (!ts) return;
+        deleteMessage(Number(ts));
+        syncToMainChat();
+        render();
+        return;
+    }
+
+    if (action === 'regen-image') {
+        const el = evt?.target?.closest?.('[data-imsg-ts]');
+        const ts = el?.getAttribute('data-imsg-ts');
+        if (!ts) return;
+        try { await regenerateChatImage(Number(ts)); }
+        catch (e) { console.error('[iMsg] regen-image failed:', e); }
+        return;
+    }
+
+    if (action === 'clear-char-avatar') {
+        settings.charAvatar = null;
+        saveSettings(); render(); return;
+    }
+
+    if (action === 'reset-state') {
+        if (!confirm('Очистить всю переписку в этом чате?')) return;
+        resetState();
+        syncToMainChat();
+        render(); updateFabBadge();
+        return;
+    }
+
+    if (action === 'fetch-llm-models') {
+        const btn = evt?.target?.closest?.('button');
+        if (btn) { btn.disabled = true; btn.textContent = '…'; }
+        try {
+            const models = await fetchModels(settings.extraApi.endpoint, settings.extraApi.apiKey);
+            window.__imsgLlmModels = models;
+            render();
+        } catch (e) {
+            alert('Ошибка: ' + e.message);
+            if (btn) { btn.disabled = false; btn.textContent = 'Загрузить модели'; }
+        }
+        return;
+    }
+
+    if (action === 'fetch-img-models') {
+        const btn = evt?.target?.closest?.('button');
+        if (btn) { btn.disabled = true; btn.textContent = '…'; }
+        try {
+            const models = await fetchModels(settings.imageApi.endpoint, settings.imageApi.apiKey);
+            window.__imsgImgModels = models;
+            render();
+        } catch (e) {
+            alert('Ошибка: ' + e.message);
+            if (btn) { btn.disabled = false; btn.textContent = 'Загрузить модели'; }
+        }
+        return;
+    }
+}
+
+export async function handleFileInput(input) {
+    // Прикрепить фото в чат
+    if (input.hasAttribute('data-imsg-file-input')) {
+        const file = input.files?.[0];
+        if (!file) return;
+        const dataUrl = await fileToDataURL(file);
+        const small = await resizeImage(dataUrl);
+        const msg = pushMessage({ from: 'user', image: small, text: '', ts: Date.now() });
+        syncToMainChat();
+        const s = loadState();
+        s.__typing = true; save();
+        render();
+        captionUserImage(msg.ts, small).catch(() => {});
+        try {
+            const n = await generateCharReply();
+            if (n > 0) updateFabBadge();
+        } catch (e) { console.error(e); }
+        s.__typing = false; save();
+        render();
+        return;
+    }
+
+    // Загрузить аватар персонажа
+    if (input.hasAttribute('data-imsg-avatar-upload')) {
+        const file = input.files?.[0];
+        if (!file) return;
+        const dataUrl = await fileToDataURL(file);
+        const small = await resizeImage(dataUrl, 512);
+        settings.charAvatar = small;
+        saveSettings(); render();
+        return;
+    }
 }
 
 export function handleSettingChange(input) {
-    const s = getSettings();
-    if (input.dataset.set) {
-        const k = input.dataset.set;
-        s[k] = input.type === 'checkbox' ? input.checked
-            : input.type === 'number' ? Number(input.value) || 0
-            : input.value;
-    } else if (input.dataset.setDeep) {
-        const path = input.dataset.setDeep.split('.');
-        let cur = s;
-        for (let i = 0; i < path.length - 1; i++) {
-            if (cur[path[i]] === undefined) cur[path[i]] = {};
-            cur = cur[path[i]];
+    const settings = getSettings();
+    const getVal = () => {
+        if (input.type === 'checkbox') return input.checked;
+        if (input.type === 'number') return Number(input.value) || 0;
+        return input.value;
+    };
+
+    if (input.dataset.imsgSet) {
+        settings[input.dataset.imsgSet] = getVal();
+        saveSettings();
+        if (input.dataset.imsgSet === 'injectIntoMain') {
+            if (settings.injectIntoMain) syncToMainChat();
+            else clearMainChatInjection();
         }
-        const last = path[path.length - 1];
-        cur[last] = input.type === 'checkbox' ? input.checked
-            : input.type === 'number' ? Number(input.value) || 0
-            : input.value;
+    } else if (input.dataset.imsgSetDeep) {
+        setDeep(settings, input.dataset.imsgSetDeep, getVal());
+        saveSettings();
+        // Авто-таймер: перезапустить если изменилась настройка
+        if (input.dataset.imsgSetDeep.startsWith('autoReply')) {
+            import('./engine.js').then(e => e.resetAutoReplyTimer());
+        }
     }
-    saveSettings();
 }
