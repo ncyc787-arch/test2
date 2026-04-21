@@ -2,7 +2,7 @@
 
 import { eventSource, event_types } from '../../../../script.js';
 import {
-    getState, setContacts, getContacts, getSettings, saveSettings, addMessage
+    getState, setContacts, getContacts, getSettings, saveSettings, addMessage, save
 } from './state.js';
 import {
     generateNPCReply, loadAllContacts,
@@ -10,7 +10,7 @@ import {
 } from './engine.js';
 import {
     renderContactList, renderChat, renderSettings, bindChatEvents,
-    appendBubble, showTyping, hideTyping, handleSettingChange,
+    appendBubble, updateBubbleImage, showTyping, hideTyping, handleSettingChange,
     setView, getView, setCurrentContactId
 } from './ui.js';
 import { fetchModels } from './api.js';
@@ -33,7 +33,7 @@ function createFAB() {
     if (document.getElementById('phonemsg-fab')) return;
     const fab = document.createElement('div');
     fab.id = 'phonemsg-fab';
-    fab.title = 'PhoneMSG (зажми и тащи чтобы передвинуть)';
+    fab.title = 'PhoneMSG';
     fab.innerHTML = `
         <svg viewBox="0 0 24 24" fill="white" width="24" height="24">
             <path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/>
@@ -55,17 +55,20 @@ function createFAB() {
     (document.documentElement || document.body).appendChild(fab);
     makeFabDraggable(fab);
 
-    const guard = () => {
-        const r = fab.getBoundingClientRect();
-        if (r.top < 0 || r.top > window.innerHeight - 20 || r.left > window.innerWidth - 20 || r.right < 20) {
-            fab.style.top = Math.max(120, window.innerHeight - 200) + 'px';
-            fab.style.right = '20px';
-            fab.style.bottom = 'auto';
-        }
-    };
-    window.addEventListener('resize', guard);
-    window.addEventListener('orientationchange', guard);
+    window.addEventListener('resize', guardFAB);
+    window.addEventListener('orientationchange', guardFAB);
     console.log(LOG, 'FAB создан');
+}
+
+function guardFAB() {
+    const fab = document.getElementById('phonemsg-fab');
+    if (!fab) return;
+    const r = fab.getBoundingClientRect();
+    if (r.top < 0 || r.top > window.innerHeight - 20 || r.left > window.innerWidth - 20 || r.right < 20) {
+        fab.style.top = Math.max(120, window.innerHeight - 200) + 'px';
+        fab.style.right = '20px';
+        fab.style.bottom = 'auto';
+    }
 }
 
 function makeFabDraggable(fab) {
@@ -120,12 +123,12 @@ function makeFabDraggable(fab) {
 }
 
 function showBadge() {
-    const badge = document.getElementById('phonemsg-badge');
-    if (badge) badge.style.display = 'flex';
+    const el = document.getElementById('phonemsg-badge');
+    if (el) el.style.display = 'flex';
 }
 function hideBadge() {
-    const badge = document.getElementById('phonemsg-badge');
-    if (badge) badge.style.display = 'none';
+    const el = document.getElementById('phonemsg-badge');
+    if (el) el.style.display = 'none';
 }
 
 function createPhoneShell() {
@@ -157,18 +160,15 @@ function createPhoneShell() {
 function applyDisplayMode() {
     const shell = document.getElementById('phonemsg-shell');
     if (!shell) return;
-    const mobile = isMobile();
     const s = getSettings();
-    const mode = mobile ? 'fullscreen' : s.displayMode;
+    const mode = isMobile() ? 'fullscreen' : s.displayMode;
     shell.classList.toggle('pmsg-fullscreen', mode === 'fullscreen');
     shell.classList.toggle('pmsg-floating', mode === 'floating');
 }
 
 function updateClock() {
     const el = document.getElementById('pmsg-clock');
-    if (el) {
-        el.textContent = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-    }
+    if (el) el.textContent = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 }
 
 function togglePhone() {
@@ -240,29 +240,23 @@ async function handleShellClick(e) {
         renderScreen();
     } else if (action === 'fetch-llm-models') {
         const s = getSettings();
-        el.disabled = true;
-        el.textContent = '...';
+        el.disabled = true; el.textContent = '...';
         try {
-            const models = await fetchModels(s.extraApi.endpoint, s.extraApi.apiKey);
-            window.__phoneMsgLlmModels = models;
+            window.__phoneMsgLlmModels = await fetchModels(s.extraApi.endpoint, s.extraApi.apiKey);
             renderScreen();
         } catch (err) {
             alert('Не удалось: ' + err.message);
-            el.disabled = false;
-            el.textContent = 'Загрузить модели';
+            el.disabled = false; el.textContent = 'Загрузить модели';
         }
     } else if (action === 'fetch-img-models') {
         const s = getSettings();
-        el.disabled = true;
-        el.textContent = '...';
+        el.disabled = true; el.textContent = '...';
         try {
-            const models = await fetchModels(s.imageApi.endpoint, s.imageApi.apiKey);
-            window.__phoneMsgImgModels = models;
+            window.__phoneMsgImgModels = await fetchModels(s.imageApi.endpoint, s.imageApi.apiKey);
             renderScreen();
         } catch (err) {
             alert('Не удалось: ' + err.message);
-            el.disabled = false;
-            el.textContent = 'Загрузить модели';
+            el.disabled = false; el.textContent = 'Загрузить модели';
         }
     } else if (action === 'reset-chat') {
         if (!confirm('Сбросить все переписки в этом чате?')) return;
@@ -270,8 +264,6 @@ async function handleShellClick(e) {
         state.conversations = {};
         state.npcMeta = {};
         state.dynamicContacts = {};
-
-        // Чистим c.chat от phonemsg-маркеров
         const c = ctx();
         if (c?.chat) {
             c.chat = c.chat.filter(m => !m.extra?.phonemsg_marker);
@@ -281,14 +273,18 @@ async function handleShellClick(e) {
             } catch {}
         }
         if (c?.saveMetadata) c.saveMetadata();
-
-        // Сбрасываем инжект
         rebuildConversationsInject();
-
         alert('Переписки сброшены');
         setView('list');
         await reloadContacts();
         renderScreen();
+    } else if (action === 'regen-image') {
+        // Перегенерация картинки (кнопка на пузырьке)
+        const contactId = el.dataset.contactId;
+        const genId = el.dataset.genId;
+        const prompt = el.dataset.prompt;
+        if (!contactId || !genId || !prompt) return;
+        await regenBubbleImage(contactId, genId, prompt);
     } else if (action === 'clear-avatar') {
         const id = el.dataset.id;
         if (!id) return;
@@ -319,16 +315,14 @@ function handleShellInput(e) {
     }
 }
 
-// ═══════════════════════════════════════════════
-// Отправка сообщения (текст или картинка)
-// ═══════════════════════════════════════════════
+// ══════════════════════════════════════════════════
+// handleSend — отправка текста и/или картинки юзера
+// ══════════════════════════════════════════════════
 async function handleSend(contact, text, attachedImageDataUrl = null) {
     const c = ctx();
     const userName = c?.name1 || 'Me';
 
-    // Сохраняем и показываем сообщение юзера
     if (attachedImageDataUrl) {
-        // Юзер отправил картинку
         const imgMsg = addMessage(contact.id, userName, text || '', {
             type: 'image',
             imageUrl: attachedImageDataUrl,
@@ -353,23 +347,84 @@ async function handleSend(contact, text, attachedImageDataUrl = null) {
     const replies = await generateNPCReply(contact, text || '[фото]', attachedImageDataUrl);
     hideTyping();
 
-    // replies — массив реплик, каждую добавляем отдельным пузырьком
     for (const reply of replies) {
+        // Сохраняем в state
         const npcMsg = addMessage(contact.id, contact.name, reply.text || '', {
             type: reply.type || 'text',
-            imageUrl: reply.imageUrl || null,
+            imageUrl: reply.imageUrl || '',
             caption: reply.caption || '',
             injectText: reply.injectText || '',
+            _generating: reply._generating || false,
+            _imgPrompt: reply._imgPrompt || '',
+            _genId: reply._genId || '',
         });
-        appendBubble(contact.id, npcMsg, userName);
 
-        // Небольшая пауза между несколькими репликами
-        if (replies.length > 1) {
-            await new Promise(r => setTimeout(r, 300));
+        // Если у reply есть _genId — нужно сохранить его в state чтобы updateGeneratedImage нашёл по нему
+        if (reply._genId) {
+            // Найти последнее добавленное сообщение и записать _genId
+            import('./state.js').then(({ getState, save }) => {
+                const st = getState();
+                const conv = st.conversations?.[contact.id];
+                if (conv && conv.length) {
+                    const last = conv[conv.length - 1];
+                    if (!last._genId) {
+                        last._genId = reply._genId;
+                        last._imgPrompt = reply._imgPrompt;
+                        last._generating = true;
+                        save();
+                    }
+                }
+            });
         }
+
+        appendBubble(contact.id, npcMsg, userName, reply._genId);
+
+        if (replies.length > 1) await new Promise(r => setTimeout(r, 300));
     }
 
     rebuildConversationsInject();
+}
+
+// ── Перегенерация конкретного пузырька-картинки ──────────────────────────────
+async function regenBubbleImage(contactId, genId, prompt) {
+    const { generateImageWithFallback } = await import('./api.js');
+    const { getCustomAvatar, getSettings: gs } = await import('./state.js');
+
+    const contact = getContacts().find(c => c.id === contactId);
+    const refAvatar = gs().useAvatarAsRef !== false
+        ? (getCustomAvatar(contactId) || contact?.avatar || null)
+        : null;
+
+    // Помечаем пузырёк как «генерируется снова»
+    updateStateMessage(contactId, genId, { _generating: true, imageUrl: '', image: '' });
+    updateBubbleImage(contactId, genId, null, true); // показать спиннер
+
+    try {
+        const s = gs();
+        const prefix = (s.imagePromptPrefix || '').trim();
+        const suffix = (s.imagePromptSuffix || '').trim();
+        const fullPrompt = [prefix, prompt, suffix].filter(Boolean).join(', ');
+        const dataUrl = await generateImageWithFallback(fullPrompt, refAvatar);
+        updateStateMessage(contactId, genId, { imageUrl: dataUrl, image: dataUrl, _generating: false });
+        updateBubbleImage(contactId, genId, dataUrl, false);
+    } catch (err) {
+        console.warn(LOG, 'regen failed:', err);
+        const errText = `[фото не загрузилось: ${String(err?.message || err).slice(0, 80)}]`;
+        updateStateMessage(contactId, genId, { imageUrl: '', image: '', text: errText, _generating: false });
+        updateBubbleImage(contactId, genId, null, false, errText);
+    }
+}
+
+function updateStateMessage(contactId, genId, patch) {
+    import('./state.js').then(({ getState, save }) => {
+        const st = getState();
+        const conv = st.conversations?.[contactId];
+        if (!conv) return;
+        const msg = conv.find(m => m._genId === genId);
+        if (!msg) return;
+        Object.assign(msg, patch);
+        save();
+    });
 }
 
 async function handleAutoMessage(contact) {
@@ -383,12 +438,23 @@ async function handleAutoMessage(contact) {
     for (const reply of replies) {
         const npcMsg = addMessage(contact.id, contact.name, reply.text || '', {
             type: reply.type || 'text',
-            imageUrl: reply.imageUrl || null,
-            caption: reply.caption || '',
-            injectText: reply.injectText || '',
+            imageUrl: reply.imageUrl || '',
+            _generating: reply._generating || false,
+            _imgPrompt: reply._imgPrompt || '',
+            _genId: reply._genId || '',
         });
+        if (reply._genId) {
+            import('./state.js').then(({ getState, save }) => {
+                const st = getState();
+                const conv = st.conversations?.[contact.id];
+                if (conv?.length) {
+                    const last = conv[conv.length - 1];
+                    if (!last._genId) { last._genId = reply._genId; last._imgPrompt = reply._imgPrompt; save(); }
+                }
+            });
+        }
         if (phoneOpen && currentContact?.id === contact.id) {
-            appendBubble(contact.id, npcMsg, userName);
+            appendBubble(contact.id, npcMsg, userName, reply._genId);
         }
         if (replies.length > 1) await new Promise(r => setTimeout(r, 300));
     }
@@ -404,9 +470,7 @@ async function reloadContacts() {
 async function onMessageReceived(messageIndex) {
     const c = ctx();
     if (!c || !c.chat) return;
-
     const idx = typeof messageIndex === 'number' ? messageIndex : c.chat.length - 1;
-
     try {
         const changed = await processBotMessage(idx);
         if (changed) {
@@ -418,6 +482,30 @@ async function onMessageReceived(messageIndex) {
         console.error(LOG, 'onMessageReceived failed:', e);
     }
 }
+
+// ── Слушаем событие phonemsg:rerender для обновления пузырька картинки ───────
+window.addEventListener('phonemsg:rerender', (e) => {
+    const contactId = e.detail?.contactId;
+    if (!contactId || !phoneOpen || currentContact?.id !== contactId) return;
+
+    // Находим все пузырьки с _generating и обновляем их
+    import('./state.js').then(({ getState }) => {
+        const st = getState();
+        const conv = st.conversations?.[contactId];
+        if (!conv) return;
+        for (const msg of conv) {
+            if (!msg._genId) continue;
+            const el = document.querySelector(`[data-gen-id="${msg._genId}"]`);
+            if (!el) continue;
+            if (!msg._generating && msg.imageUrl) {
+                updateBubbleImage(contactId, msg._genId, msg.imageUrl, false);
+            } else if (!msg._generating && msg.text) {
+                // Ошибка генерации — показываем текст
+                updateBubbleImage(contactId, msg._genId, null, false, msg.text);
+            }
+        }
+    });
+});
 
 function init() {
     try {
@@ -435,7 +523,7 @@ function init() {
             setView('list');
             setCurrentContactId(null);
             await reloadContacts();
-            try { await processExistingChat(); } catch (e) { console.warn(LOG, 'processExistingChat:', e); }
+            try { await processExistingChat(); } catch {}
             hideMarkersInDOM();
             rebuildConversationsInject();
             if (phoneOpen) renderScreen();
@@ -451,19 +539,10 @@ function init() {
             });
         }
 
-        eventSource.on(event_types.MESSAGE_RECEIVED, (messageIndex) => {
-            onMessageReceived(messageIndex);
-        });
-        eventSource.on(event_types.MESSAGE_SENT, () => {
-            setTimeout(hideMarkersInDOM, 100);
-        });
-
-        if (event_types.CHAT_LOADED) {
-            eventSource.on(event_types.CHAT_LOADED, () => setTimeout(hideMarkersInDOM, 100));
-        }
-        if (event_types.MESSAGE_SWIPED) {
-            eventSource.on(event_types.MESSAGE_SWIPED, () => setTimeout(hideMarkersInDOM, 100));
-        }
+        eventSource.on(event_types.MESSAGE_RECEIVED, (idx) => onMessageReceived(idx));
+        eventSource.on(event_types.MESSAGE_SENT, () => setTimeout(hideMarkersInDOM, 100));
+        if (event_types.CHAT_LOADED) eventSource.on(event_types.CHAT_LOADED, () => setTimeout(hideMarkersInDOM, 100));
+        if (event_types.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, () => setTimeout(hideMarkersInDOM, 100));
     }
 
     setAutoMessageCallback(handleAutoMessage);
