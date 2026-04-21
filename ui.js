@@ -22,6 +22,9 @@ export function filterVisibleText(text) {
         .replace(/<horaeevent>\s*<\/horaeevent>/gi, '')
         .replace(/<horae>[\s\S]*?<\/horae>/gi, '')
         .replace(/<horaeevent>[\s\S]*?<\/horaeevent>/gi, '')
+        // Убираем теги телефона если вдруг просочились
+        .replace(/\[телефон:[^\]]+\]\s*/gi, '')
+        .replace(/\[контакт:[^\]]+\]\s*/gi, '')
         .split('\n').filter(line => {
             const l = line.trim().toLowerCase();
             if (!l) return true;
@@ -70,12 +73,15 @@ function avatarHTML(contact, size = 44) {
     </div>`;
 }
 
-function imageBubbleHTML(msg) {
+function imageBubbleHTML(msg, isMe = false) {
     const caption = filterVisibleText(msg.caption || msg.text || '');
+    const bubbleClass = isMe ? 'pmsg-bubble-me' : 'pmsg-bubble-them';
     return `
-        <div class="pmsg-image-wrap">
-            <img class="pmsg-image" src="${esc(msg.imageUrl)}" alt="${esc(caption || 'Фото')}" loading="lazy">
-            ${caption ? `<div class="pmsg-image-caption">${esc(caption)}</div>` : ''}
+        <div class="pmsg-image-wrap ${bubbleClass}" style="border-radius:18px;overflow:hidden;max-width:220px;">
+            <img class="pmsg-image" src="${esc(msg.imageUrl)}" alt="${esc(caption || 'Фото')}" loading="lazy"
+                 style="width:100%;display:block;cursor:pointer;"
+                 onclick="window.open('${esc(msg.imageUrl)}','_blank')">
+            ${caption ? `<div class="pmsg-image-caption" style="padding:6px 10px;font-size:13px;">${esc(caption)}</div>` : ''}
         </div>
     `;
 }
@@ -153,7 +159,7 @@ export function renderChat(contacts, npcId) {
         let inner = '';
 
         if (m.type === 'image' && m.imageUrl) {
-            inner = imageBubbleHTML(m);
+            inner = imageBubbleHTML(m, isMe);
         } else {
             const visibleText = filterVisibleText(m.text || '');
             if (!visibleText) return '';
@@ -185,7 +191,17 @@ export function renderChat(contacts, npcId) {
         <div class="pmsg-messages" id="pmsg-messages">
             ${bubbles || '<div class="pmsg-empty-chat">Нет сообщений</div>'}
         </div>
+        <div id="pmsg-attach-preview" style="display:none;padding:6px 12px;background:rgba(0,0,0,0.1);">
+            <span id="pmsg-attach-name" style="font-size:12px;opacity:0.8;"></span>
+            <button id="pmsg-attach-clear" style="background:none;border:none;color:inherit;cursor:pointer;margin-left:6px;font-size:14px;">✕</button>
+        </div>
         <div class="pmsg-input-bar">
+            <label class="pmsg-attach-btn" title="Прикрепить фото" style="cursor:pointer;padding:0 8px;display:flex;align-items:center;opacity:0.7;flex-shrink:0;">
+                <svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22">
+                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
+                </svg>
+                <input type="file" id="pmsg-attach-input" accept="image/*" style="display:none">
+            </label>
             <input type="text" id="pmsg-input" class="pmsg-input"
                    placeholder="iMessage" maxlength="500" autocomplete="off">
             <button id="pmsg-send-btn" class="pmsg-send-btn">
@@ -200,14 +216,46 @@ export function renderChat(contacts, npcId) {
 export function bindChatEvents(contact, onSend) {
     const sendBtn = document.getElementById('pmsg-send-btn');
     const input = document.getElementById('pmsg-input');
+    const attachInput = document.getElementById('pmsg-attach-input');
+    const attachPreview = document.getElementById('pmsg-attach-preview');
+    const attachName = document.getElementById('pmsg-attach-name');
+    const attachClear = document.getElementById('pmsg-attach-clear');
     const avatarInput = document.querySelector(`[data-avatar-upload="${contact.id}"]`);
+
+    let pendingAttach = null; // dataUrl картинки для отправки
+
+    // Кнопка прикрепления
+    if (attachInput) {
+        attachInput.onchange = (e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                pendingAttach = String(reader.result || '');
+                if (attachPreview) attachPreview.style.display = 'flex';
+                if (attachName) attachName.textContent = `📎 ${file.name}`;
+                attachInput.value = '';
+            };
+            reader.readAsDataURL(file);
+        };
+    }
+
+    if (attachClear) {
+        attachClear.onclick = () => {
+            pendingAttach = null;
+            if (attachPreview) attachPreview.style.display = 'none';
+        };
+    }
 
     if (sendBtn && input) {
         const doSend = () => {
             const text = input.value.trim();
-            if (!text) return;
+            if (!text && !pendingAttach) return;
             input.value = '';
-            onSend(contact, text);
+            const img = pendingAttach;
+            pendingAttach = null;
+            if (attachPreview) attachPreview.style.display = 'none';
+            onSend(contact, text, img);
         };
         sendBtn.onclick = doSend;
         input.onkeydown = (e) => {
@@ -250,7 +298,7 @@ export function appendBubble(npcId, msg, userName) {
 
     let inner = '';
     if (msg.type === 'image' && msg.imageUrl) {
-        inner = imageBubbleHTML(msg);
+        inner = imageBubbleHTML(msg, isMe);
     } else {
         const visibleText = filterVisibleText(msg.text || '');
         if (!visibleText) return;
@@ -321,7 +369,7 @@ export function renderSettings() {
             <label class="pmsg-set-field">
                 <span>Режим</span>
                 <select class="pmsg-input" data-set="displayMode">
-                    <option value="floating" ${s.displayMode === 'floating' ? 'selected' : ''}>Плавающее окно (можно двигать)</option>
+                    <option value="floating" ${s.displayMode === 'floating' ? 'selected' : ''}>Плавающее окно</option>
                     <option value="fullscreen" ${s.displayMode === 'fullscreen' ? 'selected' : ''}>На весь экран</option>
                 </select>
             </label>
@@ -358,7 +406,7 @@ export function renderSettings() {
                     Использовать основной API SillyTavern
                 </span>
             </label>
-            <div class="pmsg-hint">Если выключено — все ответы НПС пойдут через Extra API ниже.</div>
+            <div class="pmsg-hint">Если выключено — ответы НПС идут через Extra API ниже. Extra API нужен для vision (картинки от юзера).</div>
             <label class="pmsg-set-field">
                 <span>Endpoint</span>
                 <input type="text" class="pmsg-input" data-set-deep="extraApi.endpoint" value="${esc(s.extraApi.endpoint)}" placeholder="https://api.openai.com">
@@ -373,7 +421,7 @@ export function renderSettings() {
                 ${llmModelOptions}
             </label>
 
-            <h3 class="pmsg-set-section">Image API (аватары и фото) ${imgStatus}</h3>
+            <h3 class="pmsg-set-section">Image API ${imgStatus}</h3>
             <label class="pmsg-set-field">
                 <span>Тип API</span>
                 <select class="pmsg-input" data-set-deep="imageApi.apiType">
@@ -404,7 +452,7 @@ export function renderSettings() {
 
             ${s.imageApi.apiType === 'openai' ? `
             <label class="pmsg-set-field">
-                <span>Размер (size)</span>
+                <span>Размер</span>
                 <select class="pmsg-input" data-set-deep="imageApi.size">
                     ${['512x512', '768x768', '1024x1024', '1024x1536', '1536x1024'].map(sz => `<option value="${sz}" ${s.imageApi.size === sz ? 'selected' : ''}>${sz}</option>`).join('')}
                 </select>
@@ -415,8 +463,7 @@ export function renderSettings() {
                     <option value="standard" ${s.imageApi.quality === 'standard' ? 'selected' : ''}>standard</option>
                     <option value="hd" ${s.imageApi.quality === 'hd' ? 'selected' : ''}>hd</option>
                 </select>
-            </label>
-            ` : ''}
+            </label>` : ''}
 
             ${s.imageApi.apiType === 'gemini' ? `
             <label class="pmsg-set-field">
@@ -426,8 +473,7 @@ export function renderSettings() {
             <label class="pmsg-set-field">
                 <span>Image size</span>
                 <input type="text" class="pmsg-input" data-set-deep="imageApi.imageSize" value="${esc(s.imageApi.imageSize || '1K')}" placeholder="1K, 2K">
-            </label>
-            ` : ''}
+            </label>` : ''}
 
             ${s.imageApi.apiType === 'naistera' ? `
             <label class="pmsg-set-field">
@@ -437,8 +483,7 @@ export function renderSettings() {
             <label class="pmsg-set-field">
                 <span>Preset</span>
                 <input type="text" class="pmsg-input" data-set-deep="imageApi.preset" value="${esc(s.imageApi.preset || 'digital')}">
-            </label>
-            ` : ''}
+            </label>` : ''}
 
             <h3 class="pmsg-set-section">Промпты для картинок</h3>
             <label class="pmsg-set-field">
