@@ -13,7 +13,7 @@ import {
     appendBubble, showTyping, hideTyping, handleSettingChange,
     setView, getView, setCurrentContactId
 } from './ui.js';
-
+import { fetchModels } from './api.js';
 import {
     pushOutgoingSystemMarker, processBotMessage, processExistingChat,
     hideMarkersInDOM, rebuildConversationsInject
@@ -65,6 +65,7 @@ function createFAB() {
     };
     window.addEventListener('resize', guard);
     window.addEventListener('orientationchange', guard);
+    console.log(LOG, 'FAB создан');
 }
 
 function makeFabDraggable(fab) {
@@ -235,10 +236,7 @@ async function handleShellClick(e) {
         setCurrentContactId(null);
         renderScreen();
     } else if (action === 'reload-contacts') {
-        el.disabled = true;
-        el.textContent = 'Загружаю...';
         await reloadContacts();
-        rebuildConversationsInject();
         renderScreen();
     } else if (action === 'fetch-llm-models') {
         const s = getSettings();
@@ -272,9 +270,21 @@ async function handleShellClick(e) {
         state.conversations = {};
         state.npcMeta = {};
         state.dynamicContacts = {};
+
+        // Чистим c.chat от phonemsg-маркеров
         const c = ctx();
+        if (c?.chat) {
+            c.chat = c.chat.filter(m => !m.extra?.phonemsg_marker);
+            try {
+                if (typeof c.saveChatConditional === 'function') await c.saveChatConditional();
+                else if (typeof c.saveChat === 'function') await c.saveChat();
+            } catch {}
+        }
         if (c?.saveMetadata) c.saveMetadata();
+
+        // Сбрасываем инжект
         rebuildConversationsInject();
+
         alert('Переписки сброшены');
         setView('list');
         await reloadContacts();
@@ -309,23 +319,42 @@ function handleShellInput(e) {
     }
 }
 
-async function handleSend(contact, text) {
+// ═══════════════════════════════════════════════
+// Отправка сообщения (текст или картинка)
+// ═══════════════════════════════════════════════
+async function handleSend(contact, text, attachedImageDataUrl = null) {
     const c = ctx();
     const userName = c?.name1 || 'Me';
 
-    const userMsg = addMessage(contact.id, userName, text);
-    appendBubble(contact.id, userMsg, userName);
+    // Сохраняем и показываем сообщение юзера
+    if (attachedImageDataUrl) {
+        // Юзер отправил картинку
+        const imgMsg = addMessage(contact.id, userName, text || '', {
+            type: 'image',
+            imageUrl: attachedImageDataUrl,
+            caption: text || '',
+            injectText: text || 'фото от пользователя',
+        });
+        appendBubble(contact.id, imgMsg, userName);
+    } else {
+        const userMsg = addMessage(contact.id, userName, text);
+        appendBubble(contact.id, userMsg, userName);
+    }
 
     rebuildConversationsInject();
 
-    try { await pushOutgoingSystemMarker(contact, text); }
+    const markerText = attachedImageDataUrl
+        ? `${text ? text + ' ' : ''}[прикрепил(а) фото]`
+        : text;
+    try { await pushOutgoingSystemMarker(contact, markerText); }
     catch (e) { console.error(LOG, 'bridge marker failed:', e); }
 
     showTyping();
-    const reply = await generateNPCReply(contact, text);
+    const replies = await generateNPCReply(contact, text || '[фото]', attachedImageDataUrl);
     hideTyping();
 
-    if (reply) {
+    // replies — массив реплик, каждую добавляем отдельным пузырьком
+    for (const reply of replies) {
         const npcMsg = addMessage(contact.id, contact.name, reply.text || '', {
             type: reply.type || 'text',
             imageUrl: reply.imageUrl || null,
@@ -333,8 +362,14 @@ async function handleSend(contact, text) {
             injectText: reply.injectText || '',
         });
         appendBubble(contact.id, npcMsg, userName);
-        rebuildConversationsInject();
+
+        // Небольшая пауза между несколькими репликами
+        if (replies.length > 1) {
+            await new Promise(r => setTimeout(r, 300));
+        }
     }
+
+    rebuildConversationsInject();
 }
 
 async function handleAutoMessage(contact) {
@@ -343,9 +378,9 @@ async function handleAutoMessage(contact) {
     showBadge();
 
     const autoPrompt = `(${contact.name} сам(-а) пишет первым(-ой) после паузы. Напиши короткое естественное сообщение.)`;
-    const reply = await generateNPCReply(contact, autoPrompt);
+    const replies = await generateNPCReply(contact, autoPrompt);
 
-    if (reply) {
+    for (const reply of replies) {
         const npcMsg = addMessage(contact.id, contact.name, reply.text || '', {
             type: reply.type || 'text',
             imageUrl: reply.imageUrl || null,
@@ -355,8 +390,9 @@ async function handleAutoMessage(contact) {
         if (phoneOpen && currentContact?.id === contact.id) {
             appendBubble(contact.id, npcMsg, userName);
         }
-        rebuildConversationsInject();
+        if (replies.length > 1) await new Promise(r => setTimeout(r, 300));
     }
+    rebuildConversationsInject();
 }
 
 async function reloadContacts() {
@@ -411,6 +447,7 @@ function init() {
                 try { await processExistingChat(); } catch {}
                 hideMarkersInDOM();
                 rebuildConversationsInject();
+                console.log(LOG, `Ready ✓ (${getContacts().length} контактов)`);
             });
         }
 
