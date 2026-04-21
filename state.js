@@ -41,6 +41,7 @@ const DEFAULT_SETTINGS = {
     },
 
     useSillyImagesConfig: true,
+    useAvatarAsRef: true,
 
     imagePromptPrefix: 'photorealistic portrait, natural lighting, sharp focus',
     imagePromptSuffix: '',
@@ -160,8 +161,13 @@ export function addMessage(npcId, sender, text, extra = {}) {
         }),
         type,
         imageUrl: extra.imageUrl || null,
+        image: extra.imageUrl || null,
         caption: stripPhoneServiceTags(extra.caption || ''),
         injectText: stripPhoneServiceTags(extra.injectText || ''),
+        _generating: extra._generating || false,
+        _imgPrompt: extra._imgPrompt || '',
+        _genId: extra._genId || '',
+        _imgCaption: extra._imgCaption || '',
     };
 
     state.conversations[npcId].push(msg);
