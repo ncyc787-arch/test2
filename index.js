@@ -2,7 +2,7 @@
 
 import { eventSource, event_types } from '../../../../script.js';
 import {
-    getState, setContacts, getContacts, getSettings, saveSettings, addMessage, save
+    getState, setContacts, getContacts, getSettings, saveSettings, addMessage, saveState
 } from './state.js';
 import {
     generateNPCReply, loadAllContacts,
@@ -362,7 +362,7 @@ async function handleSend(contact, text, attachedImageDataUrl = null) {
         // Если у reply есть _genId — нужно сохранить его в state чтобы updateGeneratedImage нашёл по нему
         if (reply._genId) {
             // Найти последнее добавленное сообщение и записать _genId
-            import('./state.js').then(({ getState, save }) => {
+            import('./state.js').then(({ getState, saveState }) => {
                 const st = getState();
                 const conv = st.conversations?.[contact.id];
                 if (conv && conv.length) {
@@ -371,7 +371,7 @@ async function handleSend(contact, text, attachedImageDataUrl = null) {
                         last._genId = reply._genId;
                         last._imgPrompt = reply._imgPrompt;
                         last._generating = true;
-                        save();
+                        saveState();
                     }
                 }
             });
@@ -416,14 +416,14 @@ async function regenBubbleImage(contactId, genId, prompt) {
 }
 
 function updateStateMessage(contactId, genId, patch) {
-    import('./state.js').then(({ getState, save }) => {
+    import('./state.js').then(({ getState, saveState }) => {
         const st = getState();
         const conv = st.conversations?.[contactId];
         if (!conv) return;
         const msg = conv.find(m => m._genId === genId);
         if (!msg) return;
         Object.assign(msg, patch);
-        save();
+        saveState();
     });
 }
 
@@ -444,12 +444,12 @@ async function handleAutoMessage(contact) {
             _genId: reply._genId || '',
         });
         if (reply._genId) {
-            import('./state.js').then(({ getState, save }) => {
+            import('./state.js').then(({ getState, saveState }) => {
                 const st = getState();
                 const conv = st.conversations?.[contact.id];
                 if (conv?.length) {
                     const last = conv[conv.length - 1];
-                    if (!last._genId) { last._genId = reply._genId; last._imgPrompt = reply._imgPrompt; save(); }
+                    if (!last._genId) { last._genId = reply._genId; last._imgPrompt = reply._imgPrompt; saveState(); }
                 }
             });
         }
