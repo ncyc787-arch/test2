@@ -1,24 +1,16 @@
-// state.js — хранилище переписок и настроек
-// chat_metadata = per-chat (переписки, динамические контакты)
-// extension_settings = глобальные (API, аватары, мост, отображение)
+// ═══════════════════════════════════════════
+// STATE — per-chat через chat_metadata + глобальные настройки
+// ═══════════════════════════════════════════
 
-import { extension_settings } from '../../../extensions.js';
+import { extension_settings, saveMetadataDebounced } from '../../../extensions.js';
 import { chat_metadata, saveSettingsDebounced } from '../../../../script.js';
 
-export const EXT_NAME = 'PhoneMSG';
-const MODULE = 'PhoneMSG';
+export const EXT_NAME = 'imessage-ext';
+const META_KEY = 'imessage';
 
-const DEFAULT_SETTINGS = {
-    lorebookSource: 'chat',
-    lorebookName: '',
-    displayMode: 'floating',
-    fabPosition: { right: 20, top: null },
-
-    autoMessagesEnabled: true,
-    autoMessageSilenceMin: 30,
-    autoMessageCooldownMin: 60,
-
-    useMainApi: true,
+// ── Глобальные настройки расширения ──
+const defaultSettings = () => ({
+    // Extra LLM API — все запросы идут сюда
     extraApi: {
         endpoint: '',
         apiKey: '',
@@ -27,212 +19,133 @@ const DEFAULT_SETTINGS = {
         maxTokens: 800,
     },
 
-    // ВАЖНО: тут сразу добавлены поля для openai и gemini/bananа
+    // Image API
     imageApi: {
         endpoint: '',
         apiKey: '',
         model: '',
         size: '1024x1024',
-        apiType: 'openai',     // 'openai' | 'gemini' | 'naistera' и т.п.
-        aspectRatio: '1:1',    // для gemini/bananа
-        imageSize: '1K',       // для gemini/bananа
-        quality: 'standard',   // для openai-совместимых (standard / hd)
-        preset: 'digital',     // на будущее (например, Naistera)
+        apiType: 'openai',  // 'openai' | 'gemini'
     },
-
     useSillyImagesConfig: true,
+
+    // Промпты для картинок
+    imagePromptPrefix: '',
+    imagePromptSuffix: '',
+    imageNegativePrompt: '',
     useAvatarAsRef: true,
 
-    imagePromptPrefix: 'photorealistic portrait, natural lighting, sharp focus',
-    imagePromptSuffix: '',
-    imageNegativePrompt: 'cartoon, anime, deformed, blurry, low quality, watermark',
+    // Синк с основным чатом
+    injectIntoMain: true,
+    injectDepth: 4,
 
-    avatars: {},
+    // Передавать описание персоны боту
+    includePersonaDescription: true,
 
-    bridgeEnabled: true,
-    bridgeIncomingTag: 'телефон',
-    bridgeContactTag: 'контакт',
-    bridgeReplaceNote: '✉️ сообщение в телефоне',
-};
+    // Авто-сообщения бота — сам пишет спустя время
+    autoReply: {
+        enabled: false,
+        minMinutes: 15,   // минимум минут до авто-сообщения
+        maxMinutes: 120,  // максимум
+    },
+
+    // Разрешить персонажу отправлять фото [IMG:...] в переписке
+    allowCharImages: true,
+
+    // Аватар персонажа (глобальный, не per-chat)
+    charAvatar: null,   // dataURL
+
+    fabPosition: { right: 20, top: null },
+});
 
 export function getSettings() {
     if (!extension_settings[EXT_NAME]) {
-        extension_settings[EXT_NAME] = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
-    }
-    const s = extension_settings[EXT_NAME];
-
-    // добиваем отсутствующие ключи верхнего уровня
-    for (const k of Object.keys(DEFAULT_SETTINGS)) {
-        if (s[k] === undefined) {
-            s[k] = JSON.parse(JSON.stringify(DEFAULT_SETTINGS[k]));
+        extension_settings[EXT_NAME] = defaultSettings();
+    } else {
+        const def = defaultSettings();
+        for (const k in def) {
+            if (extension_settings[EXT_NAME][k] === undefined) {
+                extension_settings[EXT_NAME][k] = def[k];
+            } else if (typeof def[k] === 'object' && def[k] && !Array.isArray(def[k])) {
+                for (const k2 in def[k]) {
+                    if (extension_settings[EXT_NAME][k][k2] === undefined) {
+                        extension_settings[EXT_NAME][k][k2] = def[k][k2];
+                    }
+                }
+            }
         }
     }
+    return extension_settings[EXT_NAME];
+}
 
-    // extraApi
-    if (!s.extraApi) s.extraApi = { ...DEFAULT_SETTINGS.extraApi };
-    else {
-        for (const k of Object.keys(DEFAULT_SETTINGS.extraApi)) {
-            if (s.extraApi[k] === undefined) s.extraApi[k] = DEFAULT_SETTINGS.extraApi[k];
+export const saveSettings = () => saveSettingsDebounced();
+
+// ── Per-chat состояние ──
+const defaultChatState = () => ({
+    messages: [],        // [{ts, from, text, image, deleted, _imgPrompt, _genId, _generating, _fromMain}]
+    charName: '',        // имя персонажа (name2 из ST)
+    userName: '',        // имя пользователя (name1)
+    view: 'chat',
+    // Авто-таймер: когда следующее авто-сообщение
+    nextAutoTs: null,
+});
+
+export function loadState() {
+    if (!chat_metadata[META_KEY]) {
+        chat_metadata[META_KEY] = defaultChatState();
+    } else {
+        const def = defaultChatState();
+        for (const k in def) {
+            if (chat_metadata[META_KEY][k] === undefined) {
+                chat_metadata[META_KEY][k] = def[k];
+            }
         }
     }
+    return chat_metadata[META_KEY];
+}
 
-    // imageApi (добавляем новые поля, чтобы старые конфиги не ломались)
-    if (!s.imageApi) s.imageApi = { ...DEFAULT_SETTINGS.imageApi };
-    else {
-        for (const k of Object.keys(DEFAULT_SETTINGS.imageApi)) {
-            if (s.imageApi[k] === undefined) s.imageApi[k] = DEFAULT_SETTINGS.imageApi[k];
-        }
+export const save = () => saveMetadataDebounced();
+
+export function pushMessage(msg) {
+    const s = loadState();
+    if (!Array.isArray(s.messages)) s.messages = [];
+    const full = { ts: Date.now(), ...msg };
+    s.messages.push(full);
+    save();
+    return full;
+}
+
+export function updateMessage(tsOrGenId, patch) {
+    const s = loadState();
+    // Ищем сначала по _genId (для async-генерированных картинок), потом по ts
+    const msg = (s.messages || []).find(m => m && (m._genId === tsOrGenId || m.ts === Number(tsOrGenId)));
+    if (!msg) return;
+    Object.assign(msg, patch);
+    save();
+}
+
+export function deleteMessage(ts) {
+    const s = loadState();
+    const msg = (s.messages || []).find(m => m && m.ts === Number(ts));
+    if (!msg) return;
+    msg.deleted = true;
+    save();
+}
+
+export function resetState() {
+    chat_metadata[META_KEY] = defaultChatState();
+    save();
+}
+
+// Счётчик непрочитанных от бота
+export function getUnreadCount() {
+    const s = loadState();
+    const msgs = s.messages || [];
+    // Считаем сообщения от персонажа после последнего сообщения юзера
+    let lastUserIdx = -1;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+        if (msgs[i].from === 'user') { lastUserIdx = i; break; }
     }
-
-    if (!s.avatars) s.avatars = {};
-
-    return s;
-}
-
-export function saveSettings() {
-    try {
-        saveSettingsDebounced();
-    } catch (e) {
-        console.warn('[PhoneMSG] saveSettings:', e);
-    }
-}
-
-function ctx() {
-    try {
-        return typeof SillyTavern?.getContext === 'function'
-            ? SillyTavern.getContext()
-            : null;
-    } catch {
-        return null;
-    }
-}
-
-export function getState() {
-    const c = ctx();
-    const meta = c?.chatMetadata || chat_metadata;
-
-    if (!meta[MODULE]) {
-        meta[MODULE] = {
-            conversations: {},
-            npcMeta: {},
-            dynamicContacts: {},
-        };
-    }
-
-    if (!meta[MODULE].dynamicContacts) meta[MODULE].dynamicContacts = {};
-    if (!meta[MODULE].npcMeta) meta[MODULE].npcMeta = {};
-    if (!meta[MODULE].conversations) meta[MODULE].conversations = {};
-
-    return meta[MODULE];
-}
-
-export function saveState() {
-    const c = ctx();
-    if (c?.saveMetadata) c.saveMetadata();
-}
-
-// Скрываем служебные теги horae/horaeevent, чтобы в телефоне их не было
-function stripPhoneServiceTags(text) {
-    if (!text) return '';
-    return String(text)
-        .replace(/<horae>\s*<\/horae>/gi, '')
-        .replace(/<horaeevent>\s*<\/horaeevent>/gi, '')
-        .replace(/<horae>[\s\S]*?<\/horae>/gi, '')
-        .replace(/<horaeevent>[\s\S]*?<\/horaeevent>/gi, '')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
-}
-
-export function addMessage(npcId, sender, text, extra = {}) {
-    const state = getState();
-    if (!state.conversations[npcId]) state.conversations[npcId] = [];
-
-    const now = Date.now();
-    const type = extra.type || 'text';
-    const cleanText = stripPhoneServiceTags(text);
-
-    const msg = {
-        sender,
-        text: cleanText,
-        ts: now,
-        time: new Date(now).toLocaleTimeString('ru-RU', {
-            hour: '2-digit',
-            minute: '2-digit',
-        }),
-        type,
-        imageUrl: extra.imageUrl || null,
-        image: extra.imageUrl || null,
-        caption: stripPhoneServiceTags(extra.caption || ''),
-        injectText: stripPhoneServiceTags(extra.injectText || ''),
-        _generating: extra._generating || false,
-        _imgPrompt: extra._imgPrompt || '',
-        _genId: extra._genId || '',
-        _imgCaption: extra._imgCaption || '',
-    };
-
-    state.conversations[npcId].push(msg);
-    saveState();
-    return msg;
-}
-
-export function getConversation(npcId) {
-    return getState().conversations[npcId] || [];
-}
-
-let CONTACTS = [];
-
-export function setContacts(contacts) {
-    CONTACTS = Array.isArray(contacts) ? contacts : [];
-}
-
-export function getContacts() {
-    return CONTACTS;
-}
-
-export function addDynamicContact(contact) {
-    const state = getState();
-    if (!state.dynamicContacts) state.dynamicContacts = {};
-    state.dynamicContacts[contact.id] = contact;
-    saveState();
-}
-
-export function getDynamicContacts() {
-    const state = getState();
-    return Object.values(state.dynamicContacts || {});
-}
-
-export function getNpcMeta(npcId) {
-    const state = getState();
-    if (!state.npcMeta) state.npcMeta = {};
-    if (!state.npcMeta[npcId]) {
-        state.npcMeta[npcId] = {
-            affection: 50,
-            lastSeen: null,
-            cooldown: null,
-        };
-    }
-    return state.npcMeta[npcId];
-}
-
-export function updateNpcMeta(npcId, patch) {
-    const meta = getNpcMeta(npcId);
-    Object.assign(meta, patch);
-    saveState();
-}
-
-export function getCustomAvatar(contactId) {
-    return getSettings().avatars?.[contactId] || null;
-}
-
-export function setCustomAvatar(contactId, dataUrl) {
-    const s = getSettings();
-    if (!s.avatars) s.avatars = {};
-    s.avatars[contactId] = dataUrl;
-    saveSettings();
-}
-
-export function clearCustomAvatar(contactId) {
-    const s = getSettings();
-    if (s.avatars) delete s.avatars[contactId];
-    saveSettings();
+    if (lastUserIdx === -1) return msgs.filter(m => m.from === 'char' && !m.deleted).length;
+    return msgs.slice(lastUserIdx + 1).filter(m => m.from === 'char' && !m.deleted).length;
 }
