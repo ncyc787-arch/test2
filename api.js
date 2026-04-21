@@ -1,17 +1,13 @@
 // api.js — Extra LLM + Image API для PhoneMSG
-// Шаблон img-тега:
-//   <img data-iig-instruction='{"style":"[STYLE]","prompt":"[DESC]","aspect_ratio":"[RATIO]","image_size":"[SIZE]"}' src="[IMG:GEN]">
+// Шаблон img-тега от НПС:
+//   <img data-iig-instruction='{"style":"...","prompt":"...","aspect_ratio":"...","image_size":"..."}' src="[IMG:GEN]">
 
-import { getSettings, getCustomAvatar } from './state.js';
+import { getSettings } from './state.js';
 
 const ctx = () => (typeof SillyTavern?.getContext === 'function' ? SillyTavern.getContext() : {});
 
 function cleanEndpoint(url) {
     return String(url || '').trim().replace(/\/+$/, '').replace(/\/v1$/i, '');
-}
-
-async function directFetch(url, init) {
-    return await fetch(url, init);
 }
 
 // ───────────────────────── fetchModels
@@ -21,7 +17,7 @@ export async function fetchModels(endpoint, apiKey) {
     if (!ep || !apiKey) throw new Error('Endpoint и API Key обязательны');
 
     const url = `${ep}/v1/models`;
-    const resp = await directFetch(url, {
+    const resp = await fetch(url, {
         headers: {
             'Authorization': `Bearer ${apiKey}`,
             'Content-Type': 'application/json',
@@ -40,7 +36,7 @@ export async function fetchModels(endpoint, apiKey) {
     return [];
 }
 
-// ───────────────────────── Extra LLM
+// ───────────────────────── Extra LLM (с поддержкой vision)
 
 export async function callExtraLLM(prompt, opts = {}) {
     const s = getSettings();
@@ -51,17 +47,32 @@ export async function callExtraLLM(prompt, opts = {}) {
     if (!ep || !key || !model) throw new Error('Extra API не настроен');
 
     const url = `${ep}/v1/chat/completions`;
+
+    // Контент пользователя — с vision если есть изображения
+    let userContent;
+    if (opts.images && opts.images.length > 0) {
+        userContent = [
+            { type: 'text', text: prompt },
+            ...opts.images.map(imgDataUrl => ({
+                type: 'image_url',
+                image_url: { url: imgDataUrl },
+            })),
+        ];
+    } else {
+        userContent = prompt;
+    }
+
     const body = {
         model,
         messages: [
             ...(opts.system ? [{ role: 'system', content: opts.system }] : []),
-            { role: 'user', content: prompt },
+            { role: 'user', content: userContent },
         ],
         temperature: opts.temperature ?? s.extraApi?.temperature ?? 0.9,
         max_tokens: opts.maxTokens ?? s.extraApi?.maxTokens ?? 800,
     };
 
-    const resp = await directFetch(url, {
+    const resp = await fetch(url, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -132,50 +143,20 @@ export function getResolvedImageConfig() {
     return getImageConfig();
 }
 
-// ───────────────────────── Парсинг img-тегов из ответа модели
-// Шаблон: <img data-iig-instruction='{"style":"[STYLE]","prompt":"[DESC]","aspect_ratio":"[RATIO]","image_size":"[SIZE]"}' src="[IMG:GEN]">
-
-export function extractImagesFromMessage(rawText) {
-    const text = String(rawText || '');
-    const imgPattern = /<img\s+([^>]*data-iig-instruction=['"][^'"]*['"][^>]*)>/gi;
-
-    const result = [];
-    let m;
-    while ((m = imgPattern.exec(text)) !== null) {
-        const fullTag = m[0];
-        const attrs = m[1];
-        const instrMatch = attrs.match(/data-iig-instruction=['"]([^'"]+)['"]/i);
-        const srcMatch = attrs.match(/\ssrc=['"]([^'"]+)['"]/i);
-        if (!instrMatch) continue;
-        try {
-            const json = JSON.parse(instrMatch[1]);
-            result.push({ rawTag: fullTag, instruction: json, src: srcMatch ? srcMatch[1] : null });
-        } catch (e) {
-            console.warn('[PhoneMSG-API] bad data-iig-instruction JSON:', e);
-        }
-    }
-
-    return result;
-}
-
-// ───────────────────────── Построить промпт из instruction + глобальных настроек
+// ───────────────────────── Построить промпт
 
 function buildFinalPrompt(instruction) {
     const s = getSettings();
     const parts = [];
 
-    // style — если не плейсхолдер
     const style = String(instruction.style || '').trim();
-    if (style && style !== '[STYLE]') parts.push(style);
+    if (style) parts.push(style);
 
-    // глобальный префикс
     if (s.imagePromptPrefix) parts.push(s.imagePromptPrefix);
 
-    // основное описание
     const desc = String(instruction.prompt || '').trim();
-    if (desc && desc !== '[DESC]') parts.push(desc);
+    if (desc) parts.push(desc);
 
-    // глобальный суффикс
     if (s.imagePromptSuffix) parts.push(s.imagePromptSuffix);
 
     return parts.filter(Boolean).join(', ');
@@ -201,14 +182,8 @@ export async function generateImageFromInstruction(instruction, refImage) {
     const negPrompt = buildNegativePrompt(instruction);
     const apiType = cfg.apiType || 'openai';
 
-    // aspect_ratio и image_size из instruction или из настроек
-    const aspectRatio = (instruction.aspect_ratio && instruction.aspect_ratio !== '[RATIO]')
-        ? instruction.aspect_ratio
-        : cfg.aspectRatio || '1:1';
-
-    const imageSize = (instruction.image_size && instruction.image_size !== '[SIZE]')
-        ? instruction.image_size
-        : cfg.imageSize || '1K';
+    const aspectRatio = instruction.aspect_ratio || cfg.aspectRatio || '1:1';
+    const imageSize = instruction.image_size || cfg.imageSize || '1K';
 
     const instr = { ...instruction, aspect_ratio: aspectRatio, image_size: imageSize };
 
@@ -243,7 +218,7 @@ async function generateImageOpenAI(prompt, negPrompt, instruction, cfg, refImage
         body.init_image = refImage;
     }
 
-    const resp = await directFetch(url, {
+    const resp = await fetch(url, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -274,7 +249,7 @@ async function generateImageGemini(prompt, instruction, cfg, refImage) {
             const ref = await dataUrlToInline(refImage);
             parts.push({ inlineData: { mimeType: ref.mime, data: ref.data } });
         } catch (e) {
-            console.warn('[PhoneMSG-API] refImage для Gemini не удалось разобрать:', e);
+            console.warn('[PhoneMSG-API] refImage для Gemini:', e);
         }
     }
     parts.push({ text: prompt });
@@ -290,7 +265,7 @@ async function generateImageGemini(prompt, instruction, cfg, refImage) {
         },
     };
 
-    const resp = await directFetch(url, {
+    const resp = await fetch(url, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -327,7 +302,7 @@ async function generateImageNaistera(prompt, instruction, cfg) {
         preset: instruction.preset || cfg.preset || 'digital',
     };
 
-    const resp = await directFetch(url, {
+    const resp = await fetch(url, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
