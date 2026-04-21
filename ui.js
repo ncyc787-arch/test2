@@ -494,6 +494,21 @@ export function renderSettings() {
                 <textarea class="pmsg-input" data-set="imageNegativePrompt" rows="2">${esc(s.imageNegativePrompt)}</textarea>
             </label>
 
+            <h3 class="pmsg-set-section">Автосообщения</h3>
+            <div class="pmsg-hint">НПС пишут первыми, если давно не было активности.</div>
+            <label class="pmsg-set-field"><span class="pmsg-checkbox-field">
+                <input type="checkbox" data-set="autoMessagesEnabled" ${s.autoMessagesEnabled ? 'checked' : ''}>
+                Включить автосообщения
+            </span></label>
+            <label class="pmsg-set-field"><span>Молчание перед первым сообщением (мин)</span>
+                <input type="number" class="pmsg-input" data-set="autoMessageSilenceMin"
+                    value="${s.autoMessageSilenceMin ?? 30}" min="5" max="1440" step="5">
+            </label>
+            <label class="pmsg-set-field"><span>Кулдаун между автосообщениями (мин)</span>
+                <input type="number" class="pmsg-input" data-set="autoMessageCooldownMin"
+                    value="${s.autoMessageCooldownMin ?? 60}" min="10" max="1440" step="10">
+            </label>
+
             <h3 class="pmsg-set-section">Опасная зона</h3>
             <button class="pmsg-btn pmsg-danger" data-action="reset-chat">Сбросить переписки в этом чате</button>
         </div>`;
