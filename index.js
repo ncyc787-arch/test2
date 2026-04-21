@@ -28,16 +28,27 @@ function injectFab() {
     fab.style.top = `${top}px`;
     fab.style.bottom = 'auto';
 
-    // Внешний вид — iPhone-like телефон
+    // Внешний вид — iOS Messages иконка
     fab.innerHTML = `
-        <div class="imsg-fab-phone">
-            <div class="imsg-fab-screen">
-                <div class="imsg-fab-bubble imsg-fab-bubble-in"></div>
-                <div class="imsg-fab-bubble imsg-fab-bubble-out"></div>
-                <div class="imsg-fab-bubble imsg-fab-bubble-in" style="width:55%"></div>
-            </div>
+        <div class="imsg-fab-icon">
+            <svg viewBox="0 0 60 60" xmlns="http://www.w3.org/2000/svg">
+                <rect width="60" height="60" rx="14" fill="url(#fabGrad)"/>
+                <defs>
+                    <linearGradient id="fabGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0" stop-color="#5ac8fa"/>
+                        <stop offset="1" stop-color="#0a84ff"/>
+                    </linearGradient>
+                </defs>
+                <!-- speech bubble -->
+                <ellipse cx="30" cy="27" rx="17" ry="13" fill="white"/>
+                <!-- tail -->
+                <path d="M18 37 Q14 43 12 46 Q19 42 24 38 Z" fill="white"/>
+                <!-- dots -->
+                <circle cx="22" cy="27" r="2.5" fill="#0a84ff"/>
+                <circle cx="30" cy="27" r="2.5" fill="#0a84ff"/>
+                <circle cx="38" cy="27" r="2.5" fill="#0a84ff"/>
+            </svg>
         </div>
-        <div class="imsg-fab-label">Messages</div>
     `;
     (document.documentElement || document.body).appendChild(fab);
     updateFabBadge();
