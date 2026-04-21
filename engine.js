@@ -4,7 +4,7 @@
 import { chat_metadata } from '../../../../script.js';
 import {
     addMessage, getConversation, getContacts, getNpcMeta, updateNpcMeta,
-    getSettings, getDynamicContacts, save
+    getSettings, getDynamicContacts, saveState
 } from './state.js';
 import { callExtraLLM, isExtraLLMConfigured, generateImageWithFallback } from './api.js';
 
@@ -139,14 +139,14 @@ function updateGeneratedImage(contactId, genId, patch) {
         : null;
 
     // Импортируем getState через динамический импорт чтобы избежать circular
-    import('./state.js').then(({ getState, save }) => {
+    import('./state.js').then(({ getState, saveState }) => {
         const state = getState();
         const list = state.conversations?.[contactId];
         if (!list) return;
         const msg = list.find(m => m && m._genId === genId);
         if (!msg) return;
         Object.assign(msg, patch);
-        save();
+        saveState();
         // Сигнализируем UI о перерендере
         window.dispatchEvent(new CustomEvent('phonemsg:rerender', { detail: { contactId } }));
     });
