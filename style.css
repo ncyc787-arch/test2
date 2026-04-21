@@ -45,7 +45,7 @@
     user-select: none;
     margin: 0 !important;
     left: auto !important;
-    contain: layout;
+    /* contain убран — ломает position:fixed в некоторых браузерах */
 }
 #imsg-fab:hover { transform: scale(1.05); box-shadow: 0 6px 28px rgba(29,140,248,.65), 0 2px 8px rgba(0,0,0,.4); }
 #imsg-fab:active, #imsg-fab.imsg-fab-dragging { cursor: grabbing; transform: scale(.96); transition: none; }
