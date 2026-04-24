@@ -179,14 +179,15 @@ export function findStickerById(id) {
 }
 
 // ── Компактный каталог для промпта ИИ ──
-// Формат: "s0: anime punching (angry/rage) | s1: anime kiss cheek (love/kiss) | ..."
+// Компактный каталог для промпта — короткое описание + теги
+// Из имени файла убираем мусорные слова чтобы не загрязнять контекст LLM
 export function stickerCatalogForPrompt() {
+    const noise = /\b(anime|cartoon|character|cute|emoji|person|people|girl|boy|man|woman|illustration|drawing|image|picture|photo|with|text|overlay)\b/gi;
     const all = getAllStickers();
     return all.map(s => {
-        // Краткое описание из имени файла
-        const name = s.file.split('/').pop().replace(/\.[^.]+$/, '').replace(/_/g, ' ');
-        const tags = s.tags.slice(0, 3).join('/');
-        return `${s.id}: ${name} (${tags})`;
+        let name = s.file.split('/').pop().replace(/\.[^.]+$/, '').replace(/_/g, ' ');
+        name = name.replace(noise, '').replace(/\s{2,}/g, ' ').trim();
+        return `${s.id}: ${name} (${s.tags.slice(0, 3).join('/')})`;
     }).join('\n');
 }
 
