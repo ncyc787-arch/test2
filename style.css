@@ -1000,6 +1000,36 @@ select.im-set-input option {
     margin-top: 4px;
 }
 
+/* ── REROLL кнопка ── */
+.im-msg-reroll {
+    position: absolute;
+    bottom: 2px;
+    right: -28px;
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: rgba(255,255,255,.1);
+    border-radius: 50%;
+    color: rgba(255,255,255,.45);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    opacity: 0;
+    transition: opacity .15s;
+}
+.im-msg-reroll svg { width: 14px; height: 14px; }
+.im-msg:hover .im-msg-reroll,
+.im-msg-reroll:focus { opacity: 1; }
+.im-msg-reroll:hover { background: rgba(255,255,255,.2); color: #fff; }
+.im-msg-reroll:active { transform: scale(.9); }
+
+/* На мобильных — всегда видна */
+@media (hover: none) {
+    .im-msg-reroll { opacity: 0.6; }
+}
+
 /* ── MOBILE ── */
 @media (max-width: 500px) {
     #imessage-modal { padding: 0 !important; }

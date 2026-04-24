@@ -218,6 +218,12 @@ function viewChat(contactId) {
             ? `<button class="im-msg-image-regen-failed" data-im-action="regen-image" data-im-contact="${contactId}" data-im-msgts="${m.ts}">${ICONS.refresh} повторить</button>`
             : '';
 
+        // Кнопка реролла — только на ПОСЛЕДНЕМ блоке сообщений контакта (в самом конце чата)
+        const isLastContactMsg = !isUser && idx === msgs.length - 1;
+        const rerollBtn = isLastContactMsg
+            ? `<button class="im-msg-reroll" data-im-action="reroll" data-im-contact="${contactId}" title="Перегенерировать ответ">${ICONS.refresh}</button>`
+            : '';
+
         const prev = idx > 0 ? msgs[idx - 1] : null;
         const dateSep = (!prev || !sameDay(prev.ts, m.ts))
             ? `<div class="im-date-sep"><b>${formatMsgDate(m.ts)}</b> ${formatMsgTime(m.ts)}</div>`
@@ -228,7 +234,7 @@ function viewChat(contactId) {
         const isTail = !next || next.from !== m.from || !sameDay(next.ts, m.ts);
         const tailCls = isTail ? ' im-msg-tail' : '';
 
-        return `${dateSep}<div class="${cls}${delCls}${tailCls}${stickerCls}">${stickerHTML}${imgHTML}${txtHTML}${failedRegen}</div>`;
+        return `${dateSep}<div class="${cls}${delCls}${tailCls}${stickerCls}">${stickerHTML}${imgHTML}${txtHTML}${failedRegen}${rerollBtn}</div>`;
     }).join('');
 
     const typing = s.__typing === contactId
@@ -938,6 +944,27 @@ export async function handleAction(action, contactId, evt) {
         }
         // Если текст пустой — retry: просто пробуем получить ответ на последнее сообщение
         // (полезно если API затаймаутился и ответа не было)
+        s.__typing = contactId; save();
+        render();
+        try { await generateContactReply(contactId); }
+        catch (e) { console.error(e); }
+        s.__typing = null; save();
+        render();
+    }
+    else if (action === 'reroll') {
+        if (!contactId) return;
+        // Удаляем последний блок сообщений контакта (всё после последнего сообщения юзера)
+        const msgs = s.messages[contactId] || [];
+        let cutIdx = msgs.length;
+        for (let i = msgs.length - 1; i >= 0; i--) {
+            if (msgs[i].from === 'user') break;
+            cutIdx = i;
+        }
+        if (cutIdx < msgs.length) {
+            msgs.splice(cutIdx);
+            save();
+        }
+        // Генерируем новый ответ
         s.__typing = contactId; save();
         render();
         try { await generateContactReply(contactId); }
