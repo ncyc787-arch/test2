@@ -234,7 +234,12 @@ function viewChat(contactId) {
         const isTail = !next || next.from !== m.from || !sameDay(next.ts, m.ts);
         const tailCls = isTail ? ' im-msg-tail' : '';
 
-        return `${dateSep}<div class="${cls}${delCls}${tailCls}${stickerCls}">${stickerHTML}${imgHTML}${txtHTML}${failedRegen}${rerollBtn}</div>`;
+        // Кнопка удаления — на любом сообщении (не удалённом)
+        const deleteBtn = !m.deleted
+            ? `<button class="im-msg-delete" data-im-action="delete-msg" data-im-contact="${contactId}" data-im-msgts="${m.ts}" title="Удалить">${ICONS.close}</button>`
+            : '';
+
+        return `${dateSep}<div class="${cls}${delCls}${tailCls}${stickerCls}">${stickerHTML}${imgHTML}${txtHTML}${failedRegen}${rerollBtn}${deleteBtn}</div>`;
     }).join('');
 
     const typing = s.__typing === contactId
@@ -971,6 +976,19 @@ export async function handleAction(action, contactId, evt) {
         catch (e) { console.error(e); }
         s.__typing = null; save();
         render();
+    }
+    else if (action === 'delete-msg') {
+        if (!contactId) return;
+        const tsStr = evt?.target?.closest?.('[data-im-msgts]')?.getAttribute('data-im-msgts');
+        const ts = Number(tsStr);
+        if (!ts) return;
+        const msgs = s.messages[contactId] || [];
+        const idx = msgs.findIndex(m => m.ts === ts);
+        if (idx >= 0) {
+            msgs.splice(idx, 1);
+            save();
+            render();
+        }
     }
     else if (action === 'close-app') {
         const modal = document.getElementById('imessage-modal');

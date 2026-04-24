@@ -1025,9 +1025,37 @@ select.im-set-input option {
 .im-msg-reroll:hover { background: rgba(255,255,255,.2); color: #fff; }
 .im-msg-reroll:active { transform: scale(.9); }
 
-/* На мобильных — всегда видна */
+/* ── DELETE кнопка на сообщении ── */
+.im-msg-delete {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    width: 20px;
+    height: 20px;
+    border: none;
+    background: rgba(255,59,48,.85);
+    border-radius: 50%;
+    color: #fff;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    opacity: 0;
+    transition: opacity .15s;
+}
+.im-msg-delete svg { width: 10px; height: 10px; }
+.im-msg:hover .im-msg-delete,
+.im-msg-delete:focus { opacity: 1; }
+.im-msg-delete:hover { background: #ff3b30; transform: scale(1.1); }
+.im-msg-delete:active { transform: scale(.9); }
+/* Для сообщений юзера — кнопка слева */
+.im-msg-user .im-msg-delete { right: auto; left: -8px; }
+
+/* На мобильных — видны при тапе */
 @media (hover: none) {
     .im-msg-reroll { opacity: 0.6; }
+    .im-msg-delete { opacity: 0.5; }
 }
 
 /* ── MOBILE ── */
