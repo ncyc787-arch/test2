@@ -142,7 +142,10 @@ function updateGeneratedImage(contactId, genId, patch) {
 
 export async function captionUserImage(contactId, msgTs, dataUrl) {
     if (!dataUrl || !isExtraLLMConfigured()) return;
-    const prompt = 'Опиши это фото ОДНИМ коротким предложением на русском (макс 20 слов): что/кто на фото, поза, одежда, обстановка. Сразу описание, без вступлений.';
+    const sumLang = (getSettings().summaryLanguage || 'russian').toLowerCase();
+    const prompt = sumLang === 'english'
+        ? 'Describe this photo in ONE short sentence in English (max 20 words): who/what is in the photo, pose, clothes, setting. Just the description, no intro.'
+        : 'Опиши это фото ОДНИМ коротким предложением на русском (макс 20 слов): что/кто на фото, поза, одежда, обстановка. Сразу описание, без вступлений.';
     try {
         const raw = await callExtraLLM(prompt, { images: [dataUrl], maxTokens: 120, temperature: 0.4 });
         const caption = cleanLLMOutput(raw).replace(/^["«]|["»]$/g, '').trim().slice(0, 200);
@@ -848,7 +851,38 @@ async function generateConversationSummary(contactId) {
     // Предыдущее саммари — для итеративного дополнения
     const prevSummary = (s.summaries?.[contactId]?.text || '').trim();
 
-    const prompt = `Ты ведёшь хронологический дневник переписки между ${userLabel} и ${contact.name} в iMessage.
+    const sumLang = (getSettings().summaryLanguage || 'russian').toLowerCase();
+    const isEn = sumLang === 'english';
+
+    const prompt = isEn
+    ? `You keep a chronological diary of the chat between ${userLabel} and ${contact.name} in iMessage.
+
+${prevSummary ? `PREVIOUS SUMMARY (covers older messages):
+${prevSummary}
+
+TASK: update/extend the summary with the NEW messages below. If something changed (reconciled, argued, topic shifted) — update the relevant point and add a new one. Don't delete old points if still relevant.
+
+` : ''}CONVERSATION:
+${convText}
+
+Write a summary in ENGLISH in chronological format. Each point — a separate event/phase with approximate date:
+
+Format:
+[DD.MM] Brief description of what happened
+[DD.MM] Next event
+...
+→ Current status: (one sentence — current relationship state, what's pending)
+
+RULES:
+— 5-15 points max. Group minor things, keep important ones.
+— Important: fights, reconciliations, confessions, tone shifts, big decisions, photos, ghosting.
+— Unimportant (skip): "hi-hi", small talk with no meaning.
+— If user ghosted the contact — note it ("${userLabel} hasn't replied since DD.MM").
+— If relationship changed — show dynamics: "fought → silent 2 days → ${contact.name} texted first → made up".
+— Last line (→ Current status) is the most important — other systems read it.
+— No markdown, no intro, just the points.`
+
+    : `Ты ведёшь хронологический дневник переписки между ${userLabel} и ${contact.name} в iMessage.
 
 ${prevSummary ? `ПРЕДЫДУЩЕЕ САММАРИ (покрывает более ранние сообщения):
 ${prevSummary}
@@ -977,7 +1011,28 @@ export async function generateRpSummary() {
         return `${who}: ${t.slice(0, 500)}`;
     }).filter(l => l.length > 10).join('\n');
 
-    const prompt = `Сделай краткое саммари СОБЫТИЙ из ролевой игры. Это нужно чтобы персонажи-контакты в мессенджере ${userLabel} были в курсе что происходит в её реальной жизни.
+    const sumLang = (getSettings().summaryLanguage || 'russian').toLowerCase();
+    const isEn = sumLang === 'english';
+
+    const prompt = isEn
+    ? `Write a brief summary of EVENTS from the roleplay. This is needed so that contacts in ${userLabel}'s messenger know what's happening in their real life.
+
+${prevSummary ? `Previous summary (at the time there were ${state.rpSummary?.msgCountAtGen || 0} messages in chat):
+${prevSummary}
+
+` : ''}${olderCount > 0 ? `(There are ${olderCount} older messages before this fragment — not shown. Account for them only via the previous summary above.)\n\n` : ''}RECENT RP CHUNK (old to new):
+${chatText}
+
+Write an updated summary in English: 5-15 lines. Format — list of facts/events, chronologically.
+— Where is ${userLabel} and with whom
+— What happened recently (meetings, dates, fights, decisions)
+— ${userLabel}'s emotional state
+— Open storylines / expected events
+— Important people/places mentioned
+
+Facts only. No evaluations, no "here is a summary", no markdown. If the text has profanity — don't censor, preserve the atmosphere.`
+
+    : `Сделай краткое саммари СОБЫТИЙ из ролевой игры. Это нужно чтобы персонажи-контакты в мессенджере ${userLabel} были в курсе что происходит в её реальной жизни.
 
 ${prevSummary ? `Предыдущее саммари (на момент когда было ${state.rpSummary?.msgCountAtGen || 0} сообщ. в чате):
 ${prevSummary}

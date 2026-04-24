@@ -542,6 +542,14 @@ function viewSettings() {
             </select>
         </label>
         <div class="im-set-hint">Если лорбук на английском, а ты хочешь переписку на русском — выбери «Русский». Иначе бот скатывается в язык лорбука.</div>
+        <label class="im-set-field">
+            <span>Язык саммари</span>
+            <select class="im-set-input" data-im-set="summaryLanguage">
+                <option value="russian" ${settings.summaryLanguage === 'russian' ? 'selected' : ''}>Русский</option>
+                <option value="english" ${settings.summaryLanguage === 'english' ? 'selected' : ''}>English (меньше токенов)</option>
+            </select>
+        </label>
+        <div class="im-set-hint">Язык внутренних саммари переписок и RP-событий. English расходует ~30% меньше токенов. На сами сообщения не влияет.</div>
 
         <h3 class="im-set-section">Синхронизация с чатом ST</h3>
         <label class="im-set-field row">

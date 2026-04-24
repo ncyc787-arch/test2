@@ -75,6 +75,10 @@ const defaultSettings = () => ({
     // лорбуков на английском. 'russian' | 'english' | 'japanese' | ...
     messageLanguage: 'russian',
 
+    // Язык саммари (переписок и RP-событий). 'russian' | 'english'
+    // English расходует меньше токенов.
+    summaryLanguage: 'russian',
+
     // Использовать аватарку как референс при генерации фото в чате
     useAvatarAsRef: true,
 
