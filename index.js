@@ -1,60 +1,45 @@
 // ═══════════════════════════════════════════
-// iMessage Extension — точка входа
+// iMessage — точка входа
 // ═══════════════════════════════════════════
 
 import { eventSource, event_types } from '../../../../script.js';
-import { loadState, getSettings, save, resetState } from './state.js';
-import { render, updateFabBadge, handleAction, handleFileInput, handleSettingChange } from './ui.js';
-import { syncToMainChat, clearMainChatInjection, syncFromMainChat, scheduleNextAutoReply, clearAutoReplyTimer, injectIntoChatCompletion } from './engine.js';
+import { reloadRoster, getRoster } from './roster.js';
+import { loadState, getSettings } from './state.js';
+import { render, handleAction, updateFabBadge, handleFileInput, handleSettingChange } from './ui.js';
+import {
+    syncToMainChat, syncFromMainChat, clearMainChatInjection, debugInjection,
+    injectIntoChatCompletion, startAutoMessageLoop, stopAutoMessageLoop,
+} from './engine.js';
 
-const LOG = '[iMsg]';
+const LOG = '[iMessage]';
 
-// ── FAB ──
 function injectFab() {
-    if (document.getElementById('imsg-fab')) return;
+    if (document.getElementById('imessage-fab')) return;
     const settings = getSettings();
     const fab = document.createElement('button');
-    fab.id = 'imsg-fab';
+    fab.id = 'imessage-fab';
     fab.type = 'button';
-    fab.title = 'iMessage (тащи чтобы переместить)';
+    fab.title = 'iMessage (зажми и тащи)';
 
     const vw = window.innerWidth || 360;
     const vh = window.innerHeight || 640;
     let right = settings.fabPosition?.right ?? 20;
     let top = settings.fabPosition?.top ?? Math.max(120, vh - 200);
-    right = Math.max(0, Math.min(vw - 60, right));
+    right = Math.max(0, Math.min(vw - 56, right));
     top = Math.max(0, Math.min(vh - 90, top));
     fab.style.right = `${right}px`;
     fab.style.top = `${top}px`;
     fab.style.bottom = 'auto';
 
-    // Внешний вид — iOS Messages иконка
     fab.innerHTML = `
-        <div class="imsg-fab-icon">
-            <svg viewBox="0 0 60 60" xmlns="http://www.w3.org/2000/svg">
-                <rect width="60" height="60" rx="14" fill="url(#fabGrad)"/>
-                <defs>
-                    <linearGradient id="fabGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0" stop-color="#5ac8fa"/>
-                        <stop offset="1" stop-color="#0a84ff"/>
-                    </linearGradient>
-                </defs>
-                <!-- speech bubble -->
-                <ellipse cx="30" cy="27" rx="17" ry="13" fill="white"/>
-                <!-- tail -->
-                <path d="M18 37 Q14 43 12 46 Q19 42 24 38 Z" fill="white"/>
-                <!-- dots -->
-                <circle cx="22" cy="27" r="2.5" fill="#0a84ff"/>
-                <circle cx="30" cy="27" r="2.5" fill="#0a84ff"/>
-                <circle cx="38" cy="27" r="2.5" fill="#0a84ff"/>
-            </svg>
+        <div class="im-fab-screen">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4C2.9 2 2 2.9 2 4v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>
         </div>
     `;
     (document.documentElement || document.body).appendChild(fab);
     updateFabBadge();
     makeFabDraggable(fab);
 
-    // Guard против улёта за экран
     const guard = () => {
         const r = fab.getBoundingClientRect();
         if (r.top < 0 || r.top > window.innerHeight - 20 || r.right < 20 || r.left > window.innerWidth - 20) {
@@ -77,31 +62,38 @@ function makeFabDraggable(fab) {
         origRight = parseInt(fab.style.right, 10) || 20;
         origTop = parseInt(fab.style.top, 10) || 120;
         dragging = true; moved = false;
-        fab.classList.add('imsg-fab-dragging');
+        fab.classList.add('im-fab-dragging');
         e.preventDefault();
     };
     const onMove = (e) => {
         if (!dragging) return;
         const p = e.touches ? e.touches[0] : e;
-        const dx = p.clientX - startX, dy = p.clientY - startY;
+        const dx = p.clientX - startX;
+        const dy = p.clientY - startY;
         if (Math.abs(dx) > 4 || Math.abs(dy) > 4) moved = true;
-        fab.style.right = `${Math.max(0, Math.min(window.innerWidth - 60, origRight - dx))}px`;
-        fab.style.top = `${Math.max(0, Math.min(window.innerHeight - 90, origTop + dy))}px`;
+        const newRight = Math.max(0, Math.min(window.innerWidth - 56, origRight - dx));
+        const newTop = Math.max(0, Math.min(window.innerHeight - 90, origTop + dy));
+        fab.style.right = `${newRight}px`;
+        fab.style.top = `${newTop}px`;
         fab.style.bottom = 'auto';
         e.preventDefault();
     };
     const onUp = () => {
         if (!dragging) return;
         dragging = false;
-        fab.classList.remove('imsg-fab-dragging');
+        fab.classList.remove('im-fab-dragging');
         if (moved) {
-            const s2 = getSettings();
-            s2.fabPosition = { right: parseInt(fab.style.right, 10) || 20, top: parseInt(fab.style.top, 10) || 120 };
+            const settings = getSettings();
+            settings.fabPosition = {
+                right: parseInt(fab.style.right, 10) || 20,
+                top: parseInt(fab.style.top, 10) || 120,
+            };
             import('./state.js').then(m => m.saveSettings());
         } else {
             openApp();
         }
     };
+
     fab.addEventListener('mousedown', onDown);
     fab.addEventListener('touchstart', onDown, { passive: false });
     document.addEventListener('mousemove', onMove);
@@ -111,18 +103,18 @@ function makeFabDraggable(fab) {
     document.addEventListener('touchcancel', onUp);
 }
 
-// ── Modal ──
 function injectModal() {
-    if (document.getElementById('imsg-modal')) return;
+    if (document.getElementById('imessage-modal')) return;
     const modal = document.createElement('div');
-    modal.id = 'imsg-modal';
+    modal.id = 'imessage-modal';
     modal.innerHTML = `
-        <div class="imsg-modal-backdrop" data-imsg-close></div>
-        <div class="imsg-modal-body" id="imsg-modal-body"></div>
+        <div class="im-modal-backdrop" data-im-close></div>
+        <div class="im-app" id="imessage-modal-body"></div>
     `;
     (document.documentElement || document.body).appendChild(modal);
+
     modal.addEventListener('click', (e) => {
-        if (e.target.hasAttribute('data-imsg-close')) modal.classList.remove('open');
+        if (e.target.hasAttribute('data-im-close')) modal.classList.remove('open');
     });
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && modal.classList.contains('open')) modal.classList.remove('open');
@@ -130,87 +122,123 @@ function injectModal() {
 }
 
 async function openApp() {
-    const modal = document.getElementById('imsg-modal');
+    const modal = document.getElementById('imessage-modal');
     if (!modal) return;
-    // Синкаем имена из текущего чата ST
-    syncCharNames();
     modal.classList.add('open');
+    if (!Object.keys(getRoster()).length) {
+        await reloadRoster();
+    }
     render();
-    updateFabBadge();
 }
 
-// Синхронизировать имя персонажа и пользователя из ST в стейт
-function syncCharNames() {
-    try {
-        const c = (typeof SillyTavern?.getContext === 'function') ? SillyTavern.getContext() : {};
-        const s = loadState();
-        if (c.name2) s.charName = c.name2;
-        if (c.name1) s.userName = c.name1;
-        save();
-    } catch {}
-}
-
-// ── Биндинг событий в модалке ──
 function bindEvents() {
-    const modal = document.getElementById('imsg-modal');
+    const modal = document.getElementById('imessage-modal');
     if (!modal) return;
 
-    // Клики
     modal.addEventListener('click', (e) => {
-        const el = e.target.closest('[data-imsg-action]');
-        if (!el) return;
+        const el = e.target.closest('[data-im-action]');
+        if (!el || el.tagName === 'FORM') return;
         e.preventDefault();
         e.stopPropagation();
-        handleAction(el.getAttribute('data-imsg-action'), null, e);
+        handleAction(el.getAttribute('data-im-action'), el.getAttribute('data-im-contact'), e);
     });
 
-    // Файлы
+    let touchTrack = null;
+    modal.addEventListener('touchstart', (e) => {
+        const t = e.touches[0];
+        const btn = e.target.closest?.('.im-msg-image-regen, .im-msg-image-regen-failed');
+        touchTrack = btn ? { btn, x: t.clientX, y: t.clientY, moved: false } : null;
+    }, { passive: true });
+    modal.addEventListener('touchmove', (e) => {
+        if (!touchTrack) return;
+        const t = e.touches[0];
+        if (Math.abs(t.clientX - touchTrack.x) > 8 || Math.abs(t.clientY - touchTrack.y) > 8) {
+            touchTrack.moved = true;
+        }
+    }, { passive: true });
+    modal.addEventListener('touchend', (e) => {
+        if (!touchTrack) return;
+        const tracked = touchTrack;
+        touchTrack = null;
+        if (tracked.moved) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const contactId = tracked.btn.getAttribute('data-im-contact');
+        handleAction('regen-image', contactId, { target: tracked.btn, preventDefault() {}, stopPropagation() {} });
+    }, { passive: false });
+
+    modal.addEventListener('submit', (e) => {
+        const el = e.target.closest('[data-im-action]');
+        if (!el) return;
+        e.preventDefault();
+        handleAction(el.getAttribute('data-im-action'), el.getAttribute('data-im-contact'), e);
+    });
+
     modal.addEventListener('change', (e) => {
         if (e.target.tagName === 'INPUT' && e.target.type === 'file') {
             handleFileInput(e.target);
-        } else if (e.target.dataset?.imsgSet || e.target.dataset?.imsgSetDeep) {
+        } else if (e.target.dataset?.imSet || e.target.dataset?.imSetDeep) {
             handleSettingChange(e.target);
         }
     });
 
-    // Инпуты (live-save для не-файловых полей)
     modal.addEventListener('input', (e) => {
-        if (e.target.tagName === 'INPUT' && e.target.type === 'file') return;
-        if (e.target.dataset?.imsgSet || e.target.dataset?.imsgSetDeep) {
-            if (e.target.type !== 'checkbox' && e.target.tagName !== 'SELECT') {
-                handleSettingChange(e.target);
-            }
+        if ((e.target.dataset?.imSet || e.target.dataset?.imSetDeep) && e.target.type !== 'checkbox' && e.target.tagName !== 'SELECT') {
+            handleSettingChange(e.target);
+        } else if (e.target.dataset?.imPersonaDesc !== undefined) {
+            clearTimeout(window.__imPersonaT);
+            const val = e.target.value;
+            window.__imPersonaT = setTimeout(async () => {
+                try {
+                    const c = (typeof SillyTavern?.getContext === 'function') ? SillyTavern.getContext() : {};
+                    const pu = c.powerUserSettings;
+                    const { user_avatar } = await import('../../../../script.js');
+                    if (pu && user_avatar) {
+                        if (!pu.persona_descriptions) pu.persona_descriptions = {};
+                        if (!pu.persona_descriptions[user_avatar]) pu.persona_descriptions[user_avatar] = { description: '', position: 0, depth: 4, role: 0, lorebook: '', connections: [], title: '' };
+                        pu.persona_descriptions[user_avatar].description = val;
+                        pu.persona_description = val;
+                        if (typeof c.saveSettingsDebounced === 'function') c.saveSettingsDebounced();
+                    }
+                } catch {}
+            }, 400);
         }
     });
 
-    // Ре-рендер по асинхронным событиям (генерация картинок и т.п.)
-    window.addEventListener('imsg:rerender', () => {
-        const m = document.getElementById('imsg-modal');
+    window.addEventListener('imessage:rerender', () => {
+        const m = document.getElementById('imessage-modal');
         if (m?.classList.contains('open')) render();
         updateFabBadge();
     });
 }
 
-// ── При смене чата в ST ──
 function onChatChanged() {
     console.log(LOG, 'chat changed');
-    syncCharNames();
-    syncToMainChat();
     updateFabBadge();
-    // Перезапускаем авто-таймер
-    clearAutoReplyTimer();
-    scheduleNextAutoReply();
-    const modal = document.getElementById('imsg-modal');
-    if (modal?.classList.contains('open')) render();
+    // reset sync cursor для нового чата
+    const st = loadState();
+    st.lastSyncedMainMsgIdx = -1;
+    reloadRoster().then(() => {
+        const modal = document.getElementById('imessage-modal');
+        if (modal?.classList.contains('open')) render();
+        syncToMainChat();
+    });
 }
 
-// ── После генерации основного чата — проверить не написал ли бот в телефон ──
-function onMessageReceived() {
-    syncFromMainChat();
-    updateFabBadge();
+function onMessageReceivedInMainChat() {
+    // Бот основного чата написал сообщение — проверяем не содержит ли оно
+    // "виртуальных iMessage сообщений" которые надо задублировать в наше приложение
+    setTimeout(() => {
+        try {
+            const n = syncFromMainChat();
+            if (n > 0) {
+                console.log(LOG, `извлёк ${n} сообщений из RP-чата в iMessage`);
+                updateFabBadge();
+            }
+        } catch (e) { console.warn(LOG, 'sync from main failed:', e); }
+    }, 300);
 }
 
-// ── Инициализация ──
 async function init() {
     injectFab();
     injectModal();
@@ -220,55 +248,67 @@ async function init() {
         eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
         if (event_types.APP_READY) eventSource.on(event_types.APP_READY, onChatChanged);
 
-        // Перед генерацией — обновить инжекцию
         if (event_types.GENERATION_STARTED) {
             eventSource.on(event_types.GENERATION_STARTED, () => {
                 try { syncToMainChat(); } catch {}
             });
         }
-
-        // После генерации — проверить синк из основного чата в телефон
-        if (event_types.MESSAGE_RECEIVED) {
-            eventSource.on(event_types.MESSAGE_RECEIVED, () => {
-                setTimeout(onMessageReceived, 300);
-            });
-        }
-        if (event_types.GENERATION_ENDED) {
-            eventSource.on(event_types.GENERATION_ENDED, () => {
-                setTimeout(onMessageReceived, 300);
-            });
-        }
-
-        // Страховочный инжект в chat completion
         if (event_types.CHAT_COMPLETION_PROMPT_READY) {
             eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, (eventData) => {
                 injectIntoChatCompletion(eventData);
             });
         }
+        if (event_types.MESSAGE_RECEIVED) {
+            eventSource.on(event_types.MESSAGE_RECEIVED, onMessageReceivedInMainChat);
+        }
+        if (event_types.MESSAGE_EDITED) {
+            eventSource.on(event_types.MESSAGE_EDITED, onMessageReceivedInMainChat);
+        }
     }
 
-    // Отложенная инит
-    setTimeout(() => {
-        syncCharNames();
-        syncToMainChat();
-        scheduleNextAutoReply();
+    setTimeout(async () => {
+        try { await reloadRoster(); } catch (e) { console.error(LOG, e); }
         updateFabBadge();
-        console.log(LOG, 'loaded v1.0.0. Консоль: imsgOpen() / imsgReset() / imsgDebug()');
+        syncToMainChat();
+        // Первичный синк — подтянуть виртуальные сообщения из существующего чата
+        syncFromMainChat();
+        // Запускаем таймер автосообщений
+        startAutoMessageLoop();
     }, 1500);
+
+    console.log(LOG, 'loaded v1.1.0. Console: imOpen() / imDebug() / imReset() / imReload() / imInject() / imSyncFromMain()');
 }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
 else init();
 
-// ── Глобальные хелперы для консоли ──
-window.imsgOpen = () => openApp();
-window.imsgReset = () => { resetState(); clearMainChatInjection(); updateFabBadge(); console.log(LOG, 'сброшено'); };
-window.imsgDebug = () => { const s = loadState(); console.log('state:', s); return s; };
-window.imsgFabReset = () => {
+window.imOpen = openApp;
+window.imDebug = () => {
+    const s = loadState();
+    console.log('messages:', Object.keys(s.messages).map(k => `${k}: ${s.messages[k].length}`));
+    console.log('unread:', s.unread);
+    console.log('roster:', Object.keys(getRoster()));
+    return s;
+};
+window.imReset = async () => {
+    const m = await import('./state.js');
+    m.resetState();
+    clearMainChatInjection();
+    updateFabBadge();
+    console.log(LOG, 'сброшено');
+};
+window.imReload = async () => { const n = await reloadRoster(); console.log(LOG, 'контактов:', n); render(); };
+window.imInject = debugInjection;
+window.imSyncFromMain = () => {
+    const n = syncFromMainChat();
+    console.log(LOG, `извлечено: ${n}`);
+    return n;
+};
+window.imFabReset = () => {
     const vh = window.innerHeight || 640;
-    const s = getSettings();
-    s.fabPosition = { right: 20, top: Math.max(120, vh - 200) };
+    const settings = getSettings();
+    settings.fabPosition = { right: 20, top: Math.max(120, vh - 200) };
     import('./state.js').then(m => m.saveSettings());
-    const fab = document.getElementById('imsg-fab');
-    if (fab) { fab.style.right = '20px'; fab.style.top = s.fabPosition.top + 'px'; fab.style.bottom = 'auto'; }
+    const fab = document.getElementById('imessage-fab');
+    if (fab) { fab.style.right = '20px'; fab.style.top = settings.fabPosition.top + 'px'; fab.style.bottom = 'auto'; }
 };
