@@ -931,9 +931,13 @@ export async function handleAction(action, contactId, evt) {
         const form = evt?.target?.closest?.('form');
         const input = form?.querySelector('.im-chat-field');
         const text = input?.value?.trim();
-        if (!text) return;
-        input.value = '';
-        pushMessage(contactId, { from: 'user', text });
+        // Если текст есть — отправляем сообщение юзера
+        if (text) {
+            input.value = '';
+            pushMessage(contactId, { from: 'user', text });
+        }
+        // Если текст пустой — retry: просто пробуем получить ответ на последнее сообщение
+        // (полезно если API затаймаутился и ответа не было)
         s.__typing = contactId; save();
         render();
         try { await generateContactReply(contactId); }
