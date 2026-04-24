@@ -94,17 +94,17 @@ async function generateContactMeta(rawContact) {
         return heuristicMeta(rawContact);
     }
 
-    const prompt = `Проанализируй персонажа из лорбука и извлеки ДВА поля для iMessage-симулятора.
+    const prompt = `Analyze a lorebook character and extract TWO fields for an iMessage simulator.
 
-ИМЯ: ${rawContact.name}
+NAME: ${rawContact.name}
 
-ОПИСАНИЕ:
+DESCRIPTION:
 ${desc}
 
-Верни ТОЛЬКО валидный JSON, без markdown, без \`\`\`:
+Return ONLY valid JSON, no markdown, no \`\`\`:
 {
-  "styleNote": "1-2 предложения КАК ИМЕННО этот персонаж пишет в мессенджере — объём сообщений (короткие/длинные), темп (сразу отвечает/тянет), тон (грубо/нежно/формально/с матом), эмодзи (часто/редко/никогда), особенности (опечатки, caps, сокращения). Опирайся строго на его характер из описания.",
-  "imagePrompt": "английский промпт для генерации его фото, 15-25 слов, реалистичное фото для мессенджера. Описывает внешность персонажа если она есть в описании, иначе по контексту (возраст/роль/стиль)."
+  "styleNote": "1-2 sentences describing HOW this character texts in a messenger — message length (short/long), pace (instant replies/slow), tone (rude/tender/formal/profane), emoji usage (often/rarely/never), quirks (typos, caps, abbreviations). Base strictly on the character description above.",
+  "imagePrompt": "english prompt for generating their photo, 15-25 words, realistic messenger photo. Describe appearance if available, otherwise infer from age/role/style."
 }`;
 
     try {
@@ -115,7 +115,7 @@ ${desc}
         if (!m) throw new Error('JSON не найден');
         const card = JSON.parse(m[0]);
         return {
-            styleNote: String(card.styleNote || '').trim() || 'Пишет в обычном темпе.',
+            styleNote: String(card.styleNote || '').trim() || 'Normal texting pace, no special quirks.',
             imagePrompt: String(card.imagePrompt || '').trim() || `${rawContact.name}, photorealistic portrait, casual`,
         };
     } catch (e) {
@@ -126,7 +126,7 @@ ${desc}
 
 function heuristicMeta(rawContact) {
     return {
-        styleNote: 'Пишет в обычном темпе, без особенностей.',
+        styleNote: 'Normal texting pace, no special quirks.',
         imagePrompt: `${rawContact.name}, photorealistic portrait, casual messenger photo`,
     };
 }
@@ -176,6 +176,8 @@ export async function reloadRoster() {
             meta = heuristicMeta(raw);
             needsParse = true;
         }
+        // Per-chat overrides (user-edited styleNote, description override)
+        const perChatMeta = getContactMeta(raw.id) || {};
         newRoster[raw.id] = {
             ...meta,
             name: raw.name,
@@ -185,6 +187,9 @@ export async function reloadRoster() {
             _rawKeys: raw.rawKeys,
             _lorebookName: lbName,
             _needsLLMParse: needsParse,
+            // Apply user overrides from per-chat storage
+            ...(perChatMeta._descOverride ? { _descOverride: perChatMeta._descOverride } : {}),
+            ...(perChatMeta.styleNote ? { styleNote: perChatMeta.styleNote } : {}),
         };
         newOrder.push(raw.id);
     }
@@ -378,7 +383,7 @@ export function ensureContactForName(rawName) {
                 const initial = (info.name[0] || '?').toUpperCase();
                 CURRENT_ROSTER[existing] = {
                     name: info.name,
-                    styleNote: 'Пишет в обычном темпе.',
+                    styleNote: 'Normal texting pace, no special quirks.',
                     imagePrompt: `${info.name}, photorealistic portrait`,
                     _gradient: gradientFor(existing),
                     _initial: initial,
@@ -399,7 +404,7 @@ export function ensureContactForName(rawName) {
 
     CURRENT_ROSTER[id] = {
         name: displayName,
-        styleNote: 'Пишет обычным повседневным языком — коротко, без особенностей стиля. Характер и манера пока не заданы.',
+        styleNote: 'Normal casual texting — short messages, no special style. Character and manner not yet defined.',
         imagePrompt: `${displayName}, photorealistic portrait, casual photo`,
         _gradient: gradientFor(id),
         _initial: (displayName[0] || '?').toUpperCase(),

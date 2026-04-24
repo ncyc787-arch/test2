@@ -839,10 +839,10 @@ async function generateConversationSummary(contactId) {
     // Собираем текст переписки — с датами для хронологии
     const convText = msgs.map(m => {
         const who = m.from === 'user' ? userLabel : contact.name;
-        const flag = m.deleted ? ' [потом удалено]' : '';
-        const img = m.image ? ' [фото]' : (m._imgPrompt ? ` [фото: ${m._imgPrompt.slice(0, 60)}]` : '');
+        const flag = m.deleted ? ' [deleted after]' : '';
+        const img = m.image ? ' [photo]' : (m._imgPrompt ? ` [photo: ${m._imgPrompt.slice(0, 60)}]` : '');
         const stk = m.sticker
-            ? ` [стикер: ${m.sticker.split('/').pop().replace(/\.[^.]+$/, '').replace(/_/g, ' ')}]`
+            ? ` [sticker: ${m.sticker.split('/').pop().replace(/\.[^.]+$/, '').replace(/_/g, ' ')}]`
             : '';
         const time = m.ts ? new Date(m.ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
         return `[${time}] ${who}: ${(m.text || '').slice(0, 200)}${img}${stk}${flag}`;
@@ -1302,16 +1302,16 @@ export async function generateContactReply(contactId, opts = {}) {
 
     const historyText = history.map((m, idx) => {
         const who = m.from === 'user' ? userLabel : contact.name;
-        const flag = m.deleted ? ' [удалил потом]' : '';
+        const flag = m.deleted ? ' [deleted after]' : '';
         const stickerMark = m.sticker
-            ? ` [стикер: ${m.sticker.split('/').pop().replace(/\.[^.]+$/, '').replace(/_/g, ' ')}]`
+            ? ` [sticker: ${m.sticker.split('/').pop().replace(/\.[^.]+$/, '').replace(/_/g, ' ')}]`
             : '';
         let img = '';
         if (m.image || m._imgPrompt) {
             if (m.from === 'user') {
-                img = m._imgCaption ? ` [прислал фото: ${m._imgCaption}]` : ' [прислал фото]';
+                img = m._imgCaption ? ` [sent photo: ${m._imgCaption}]` : ' [sent photo]';
             } else {
-                img = m._imgPrompt ? ` [прислал фото: ${m._imgPrompt}]` : ' [прислал фото]';
+                img = m._imgPrompt ? ` [sent photo: ${m._imgPrompt}]` : ' [sent photo]';
             }
         }
         let gap = '';
@@ -1321,9 +1321,9 @@ export async function generateContactReply(contactId, opts = {}) {
             const hours = Math.floor(diffMs / 3600000);
             if (hours >= 24) {
                 const days = Math.floor(hours / 24);
-                gap = `--- прошло ${days} ${days === 1 ? 'день' : days < 5 ? 'дня' : 'дней'} ---\n`;
+                gap = `--- ${days} day${days > 1 ? 's' : ''} later ---\n`;
             } else if (hours >= 1) {
-                gap = `--- прошло ${hours} ${hours === 1 ? 'час' : hours < 5 ? 'часа' : 'часов'} ---\n`;
+                gap = `--- ${hours} hour${hours > 1 ? 's' : ''} later ---\n`;
             }
         }
         return `${gap}${who}: ${m.text || ''}${img}${stickerMark}${flag}`;
@@ -1333,21 +1333,21 @@ export async function generateContactReply(contactId, opts = {}) {
     const includePersonaDesc = settings.includePersonaDescription !== false;
     const profile = settings.profile || {};
     const profileLines = [];
-    if (profile.name) profileLines.push(`имя: ${profile.name}`);
-    if (profile.extraBio) profileLines.push(`о себе: ${profile.extraBio}`);
-    const profileBlock = profileLines.length ? `Анкета:\n${profileLines.join('\n')}\n` : '';
+    if (profile.name) profileLines.push(`name: ${profile.name}`);
+    if (profile.extraBio) profileLines.push(`bio: ${profile.extraBio}`);
+    const profileBlock = profileLines.length ? `Profile:\n${profileLines.join('\n')}\n` : '';
     const personaBlock = ((includePersonaDesc && persona.description) || profileBlock)
-        ? `\nО СОБЕСЕДНИКЕ (${userLabel}):\n${profileBlock}${(includePersonaDesc && persona.description) ? persona.description : ''}\n`
+        ? `\nABOUT THE OTHER PERSON (${userLabel}):\n${profileBlock}${(includePersonaDesc && persona.description) ? persona.description : ''}\n`
         : '';
 
     // Контекст из основного чата ST — недавние сообщения
     const stExcerpt = getMainChatExcerpt(contact.name, 8);
     const encounterBlock = stExcerpt
-        ? `\nПАРАЛЛЕЛЬНО ВЫ ОБЩАЕТЕСЬ ВНЕ МЕССЕНДЖЕРА (например, лично, по видеосвязи, в другом месте — понимай из текста). Это ТЫ (${contact.name}) и ${userLabel}, та же пара:\n${stExcerpt}\n`
+        ? `\nYOU AND ${userLabel} ARE ALSO INTERACTING OUTSIDE THIS MESSENGER (e.g. in person, video call, another setting — infer from text). This is YOU (${contact.name}) and ${userLabel}, same pair:\n${stExcerpt}\n`
         : '';
 
     // Сырое описание — ПЕРВОИСТОЧНИК
-    let rawDesc = contact._rawDescription || '';
+    let rawDesc = contact._descOverride || contact._rawDescription || '';
     if (rawDesc) {
         try {
             const c = (typeof SillyTavern?.getContext === 'function') ? SillyTavern.getContext() : {};
@@ -1355,87 +1355,85 @@ export async function generateContactReply(contactId, opts = {}) {
         } catch {}
     }
     const lorebookBlock = rawDesc
-        ? `\nПОЛНОЕ ОПИСАНИЕ ${contact.name.toUpperCase()} (из лорбука — твоя биография, характер, факты. Это ТЫ.):\n${rawDesc}\n`
+        ? `\nFULL BIO OF ${contact.name.toUpperCase()} (from lorebook — your biography, personality, facts. This is YOU.):\n${rawDesc}\n`
         : '';
 
     // Отношения с другими персонажами лорбука
     const relationsBlock = buildRelationshipContext(contactId);
     const relationsSection = relationsBlock
-        ? `\nДРУГИЕ ЛЮДИ, КОТОРЫХ ТЫ ЗНАЕШЬ (друзья, враги, коллеги, родня — из того же лорбука). Ты в курсе кто это и как к ним относишься:\n${relationsBlock}\n`
+        ? `\nOTHER PEOPLE YOU KNOW (friends, enemies, colleagues, family — from the same lorebook). You know who they are and how you feel about them:\n${relationsBlock}\n`
         : '';
 
-    // RP-саммари — что происходит в реальной жизни юзера. Все контакты в курсе.
+    // RP-саммари — общий фон. Контакт НЕ всеведущ.
     const rpSum = getRpSummary();
     const rpSummarySection = rpSum
-        ? `\nЧТО ПРОИСХОДИТ В ЖИЗНИ ${userLabel.toUpperCase()} (ты в курсе этих событий — услышал, увидел, узнал, или ${userLabel} тебе рассказывала):\n${rpSum}\n`
+        ? `\nBACKGROUND (events in ${userLabel}'s life — but YOU ARE NOT OMNISCIENT):
+${rpSum}
+⚠ IMPORTANT: you ONLY know what ${userLabel} PERSONALLY told you in YOUR conversation above, or what is public/common knowledge. Private events (who stays at their place, personal secrets, what happens behind closed doors) are UNKNOWN to you unless ${userLabel} mentioned them in YOUR chat above. Do NOT ask about events you couldn't possibly know about.\n`
         : '';
 
     const isAutoInitiated = opts.autoInitiated === true;
     const autoHint = isAutoInitiated
-        ? `\n\nКОНТЕКСТ: Ты пишешь ${userLabel} САМ, по своей инициативе. С последнего сообщения прошло какое-то время. Напиши то, что ЕСТЕСТВЕННО для тебя в таком случае — может вспомнил о чём-то, что-то произошло, или просто захотел написать. Не начинай с "привет", если вы и так в переписке — просто продолжай как в реальности.`
+        ? `\n\nCONTEXT: You are texting ${userLabel} on YOUR OWN initiative. Some time has passed since the last message. Write what would be NATURAL for you — maybe you remembered something, something happened, or you just felt like texting. Don't start with "hey" if you're already mid-conversation — just continue naturally.`
         : '';
 
-    // Если это повторная попытка после того как все части были отфильтрованы —
-    // усиливаем требование в промпте.
     const retryHint = opts._isRetry
-        ? `\n\n⚠ ПОВТОРНАЯ ПОПЫТКА: предыдущий твой ответ был в формате RP-абзаца/прозы и был ОТКЛОНЁН. Сейчас пиши МАКСИМАЛЬНО КОРОТКО — 1-3 коротких предложения как в реальном SMS. Только от первого лица. Никакого пересказа событий, никакого третьего лица, никаких действий в звёздочках.`
+        ? `\n\n⚠ RETRY: your previous response was in RP-prose format and was REJECTED. Now write VERY SHORT — 1-3 short sentences like a real SMS. First person only. No retelling events, no third person, no asterisk actions.`
         : '';
 
-    // Язык, на котором бот ДОЛЖЕН писать в мессенджере. По умолчанию русский.
-    // Нужен потому что лорбуки часто на английском и модель без явного указания
-    // начинает отвечать на английском.
+    // Язык сообщений
     const langRaw = (settings.messageLanguage || 'russian').toLowerCase();
     const langMap = {
-        russian: { name: 'русском', instr: 'ПИШИ ТОЛЬКО НА РУССКОМ ЯЗЫКЕ, даже если описание персонажа на английском.' },
-        english: { name: 'английском', instr: 'Write ONLY in English.' },
-        japanese: { name: 'японском', instr: '日本語でのみ書いてください。' },
-        spanish: { name: 'испанском', instr: 'Escribe SOLO en español.' },
-        french: { name: 'французском', instr: 'Écris UNIQUEMENT en français.' },
-        german: { name: 'немецком', instr: 'Schreibe NUR auf Deutsch.' },
-        chinese: { name: 'китайском', instr: '只用中文写。' },
-        korean: { name: 'корейском', instr: '한국어로만 쓰세요.' },
+        russian: 'WRITE MESSAGES ONLY IN RUSSIAN, even if the character description is in English.',
+        english: 'Write ONLY in English.',
+        japanese: '日本語でのみ書いてください。',
+        spanish: 'Escribe SOLO en español.',
+        french: 'Écris UNIQUEMENT en français.',
+        german: 'Schreibe NUR auf Deutsch.',
+        chinese: '只用中文写。',
+        korean: '한국어로만 쓰세요.',
     };
-    const langCfg = langMap[langRaw] || langMap.russian;
-    const languageLine = `\n— ЯЗЫК СООБЩЕНИЙ: ${langCfg.instr}`;
+    const languageLine = `\n— MESSAGE LANGUAGE: ${langMap[langRaw] || langMap.russian}`;
 
-    const prompt = `Ты ${contact.name} в мессенджере (iMessage). Переписка с ${userLabel}.
+    const prompt = `You are ${contact.name} in iMessage. Chatting with ${userLabel}.
 
 ${lorebookBlock}${relationsSection}${rpSummarySection}
-КАК ТЫ ПИШЕШЬ В МЕССЕНДЖЕРЕ: ${contact.styleNote || 'обычный темп'}${personaBlock}${encounterBlock}
-ПЕРЕПИСКА В iMessage:
-${historyText || '(переписки ещё не было — это твоё первое сообщение)'}${autoHint}${retryHint}
+YOUR TEXTING STYLE (STRICTLY follow this — length, tone, message count):
+${contact.styleNote || 'normal pace, 1-2 messages at a time'}
+⚠ IMPORTANT: number of message bubbles MUST match the style above. If it says "short blunt" — send 1-2 short ones, NOT 4-5. If "chatty" — 3-4 is ok. Default: NO MORE than 2-3 messages at a time.${personaBlock}${encounterBlock}
+iMessage CONVERSATION:
+${historyText || '(no messages yet — this is your first message)'}${autoHint}${retryHint}
 
-ЗАДАЧА: напиши следующее сообщение(я) от лица ${contact.name}.
+TASK: write the next message(s) as ${contact.name}.
 
-═══ ЭТО МЕССЕНДЖЕР, А НЕ КНИГА И НЕ RP-СЦЕНА ═══
-Ты набираешь текст пальцами в iMessage. Только то, что реально отправляют в SMS живые люди.
+═══ THIS IS A MESSENGER, NOT A NOVEL OR RP SCENE ═══
+You are typing with your thumbs in iMessage. Only what real people actually send via text.
 
-❌ НЕЛЬЗЯ (это RP, а не SMS):
-— «Она поделилась своей историей о том, как отец-алкоголик критиковал её в детстве. Во время разговора она несколько раз повторила, что чувствует себя сломленной.»
-— «*улыбается* рад тебя слышать *смотрит в окно*»
-— «Пользователь просит меня ответить как Дэвид. Мы должны ответить ей сочувственно.»
-— «Respond to her last message as David.»
-— Длинные абзацы в третьем лице. Нарратив. Пересказ того что было. Инструкции самому себе.
+❌ FORBIDDEN (this is RP, not SMS):
+— "She shared her story about her alcoholic father who criticized her in childhood. During the conversation she repeated several times that she feels broken."
+— "*smiles* glad to hear from you *looks out window*"
+— "The user asks me to respond as David. We should respond with empathy."
+— Long paragraphs in third person. Narrative. Retelling what happened. Instructions to yourself.
 
-✅ МОЖНО (это живой SMS):
-— «ого… тяжело. держись»
-— «я тут подумал о тебе»
-— «не спишь?»
-— «слушай ну это жесть конечно. мне жаль что у тебя так было»
-— «можем созвониться?»
+✅ ALLOWED (real SMS):
+— "damn… that's rough. hang in there"
+— "was just thinking about you"
+— "you up?"
+— "listen that's crazy honestly. sorry you went through that"
+— "wanna call?"
 
-ПРАВИЛА:
-— Пиши от ПЕРВОГО лица (я/мне), к собеседнику на «ты» (или как у тебя принято).
-— НИКАКИХ описаний действий (*улыбнулся*, «он посмотрел»). Никаких звёздочек, скобок с ремарками.
-— НИКАКОГО третьего лица про себя или собеседника («она сказала», «он чувствует»). Только прямая речь.
-— НИКАКИХ инструкций/мета-комментариев («давай ответим», «мы должны», «respond as»).
-— Если по стилю шлёшь несколько сообщений подряд — раздели ДВОЙНЫМ переносом строки (это будут отдельные пузыри в чате).
-— Если одно сообщение хочешь удалить после отправки — оберни в [DELETED]текст[/DELETED].
-— Если уместно прислать фото (редко, ~1 раз на 10-15 сообщений) — отдельным сообщением [IMG:английское описание, 10-20 слов].
-— Никаких "${contact.name}:", без markdown, без <think>.${languageLine}
+RULES:
+— Write in FIRST person (I/me), address the other person as "you".
+— NO action descriptions (*smiled*, "he looked"). No asterisks, no bracketed stage directions.
+— NO third person about yourself or the other person ("she said", "he feels"). Direct speech only.
+— NO instructions/meta-comments ("let's respond", "we should", "respond as").
+— If sending multiple messages — separate with DOUBLE newline (each becomes a separate chat bubble).
+— To delete a sent message — wrap in [DELETED]text[/DELETED].
+— To send a photo (rarely, ~1 per 10-15 messages) — separate message [IMG:english description, 10-20 words].
+— No "${contact.name}:", no markdown, no <think>.${languageLine}
 
-СТИКЕРЫ (опционально, это просто emoji-реакции в чате, НЕ имеют отношения к личности/характеру/профессии персонажа):
-Можешь отправить стикер если уместно, НЕ ЧАЩЕ чем раз в 4-6 сообщений. Отдельной строкой [STICKER:id].
+STICKERS (optional, just emoji-reactions, NOT related to character personality/profession):
+Send a sticker if appropriate, NO MORE than once per 4-6 messages. On its own line [STICKER:id].
 ${stickerCatalogForPrompt()}`;
 
     const lastMsg = history[history.length - 1];
@@ -1706,9 +1704,9 @@ export function syncToMainChat() {
         lines.push('');
         lines.push(`If ${contact.name} wants to SEND A PHOTO/SELFIE in iMessage, use ONE of these formats — the extension auto-generates the actual image:`);
         lines.push(`  • ${contact.name} sends photo: "short english description, 10-20 words"`);
-        lines.push(`  • ${contact.name} прислал фото: "короткое английское описание"`);
-        lines.push(`  • ${contact.name} texts: "[фото: english description]"    ← tag inside quotes also works`);
-        lines.push(`  • ${contact.name} texts: "текст сообщения [photo: english description] ещё текст"   ← mix text + photo in one reply`);
+        lines.push(`  • ${contact.name} sends photo: "short english description for image gen"`);
+        lines.push(`  • ${contact.name} texts: "[photo: english description]"    ← tag inside quotes also works`);
+        lines.push(`  • ${contact.name} texts: "message text [photo: english description] more text"   ← mix text + photo in one reply`);
         lines.push(`Description should be concise English suitable for an image generator (e.g. "selfie in locker room, wet hair, towel on shoulders, smirk").`);
         lines.push('');
         lines.push(`⚠ The quoted text MUST be a real SMS — what a person actually types with their thumbs. NOT narrative, NOT a paragraph, NOT third-person prose, NOT a meta-instruction.`);
@@ -1718,7 +1716,7 @@ export function syncToMainChat() {
         lines.push('');
 
         if (summary && olderCount > 0) {
-            lines.push(`КРАТКОЕ САММАРИ ПЕРЕПИСКИ С ${contact.name.toUpperCase()} (покрывает всю историю, всего ${total} сообщ.):`);
+            lines.push(`CHAT SUMMARY WITH ${contact.name.toUpperCase()} (covers full history, ${total} messages total):`);
             lines.push(summary);
             lines.push('');
         }
@@ -1758,7 +1756,7 @@ export function syncToMainChat() {
 
             lines.push(`### ${contact.name} (${total} message${total === 1 ? '' : 's'} total)`);
             if (summary && olderCount > 0) {
-                lines.push(`Саммари: ${summary}`);
+                lines.push(`Summary: ${summary}`);
             }
             lines.push(`Last ${tail.length}:`);
             for (const m of tail) {

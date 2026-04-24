@@ -302,17 +302,20 @@ function viewContactInfo(contactId) {
             <div class="im-contact-desc">Контакт появился сам когда в чате ST бот написал «${esc(contact.name)} texts: ...». У него нет описания, поэтому LLM отвечает обезличенно. Чтобы задать характер и стиль — добавь запись с именем «${esc(contact.name)}» в лорбук этого чата и нажми «Перечитать из лорбука» ниже.</div>
         </div>` : ''}
 
-        ${rawDesc ? `
         <div class="im-contact-section">
-            <div class="im-contact-section-title">О контакте</div>
-            <div class="im-contact-desc">${esc(rawDesc)}</div>
-        </div>` : ''}
+            <div class="im-contact-section-title">О контакте <span style="opacity:.5;font-size:12px">(из лорбука${contact._descOverride ? ' + правки' : ''})</span></div>
+            <textarea class="im-set-input im-contact-edit-desc" data-im-contact="${contactId}" data-im-field="descOverride" rows="4" placeholder="Описание контакта (можно редактировать — переопределит лорбук)">${esc(contact._descOverride || rawDesc)}</textarea>
+            ${contact._descOverride ? `<button class="im-btn-row small" data-im-action="reset-desc-override" data-im-contact="${contactId}" style="color:#ff9500;margin-top:4px">↩ Сбросить к лорбуку</button>` : ''}
+        </div>
 
-        ${contact.styleNote ? `
         <div class="im-contact-section">
             <div class="im-contact-section-title">Как пишет</div>
-            <div class="im-contact-desc">${esc(contact.styleNote)}</div>
-        </div>` : ''}
+            <textarea class="im-set-input im-contact-edit-style" data-im-contact="${contactId}" data-im-field="styleNote" rows="2" placeholder="Стиль: короткие рубленые фразы / длинные сообщения / с эмодзи / сарказм...">${esc(contact.styleNote || '')}</textarea>
+        </div>
+
+        <button class="im-btn-row" data-im-action="save-contact-edits" data-im-contact="${contactId}" style="background:rgba(52,199,89,.15);color:#34c759;margin-bottom:8px">
+            <span>💾 Сохранить изменения</span>
+        </button>
 
         <div class="im-contact-actions">
             <button class="im-btn-row" data-im-action="gen-avatar" data-im-contact="${contactId}">
@@ -989,6 +992,44 @@ export async function handleAction(action, contactId, evt) {
             save();
             render();
         }
+    }
+    else if (action === 'save-contact-edits') {
+        if (!contactId) return;
+        const ROSTER = getRoster();
+        const contact = ROSTER[contactId];
+        if (!contact) return;
+        const body = document.getElementById('imessage-modal-body');
+        const descEl = body?.querySelector(`.im-contact-edit-desc[data-im-contact="${contactId}"]`);
+        const styleEl = body?.querySelector(`.im-contact-edit-style[data-im-contact="${contactId}"]`);
+        const newDesc = descEl?.value?.trim() || '';
+        const newStyle = styleEl?.value?.trim() || '';
+        const rawDesc = contact._rawDescription || '';
+        // Если описание отличается от лорбука — сохраняем как override
+        if (newDesc && newDesc !== rawDesc) {
+            contact._descOverride = newDesc;
+        } else {
+            delete contact._descOverride;
+        }
+        contact.styleNote = newStyle;
+        // Сохраняем в per-chat contactMeta
+        import('./state.js').then(m => {
+            m.setContactMeta(contactId, {
+                _descOverride: contact._descOverride || null,
+                styleNote: contact.styleNote || '',
+            });
+        });
+        render();
+    }
+    else if (action === 'reset-desc-override') {
+        if (!contactId) return;
+        const ROSTER = getRoster();
+        const contact = ROSTER[contactId];
+        if (!contact) return;
+        delete contact._descOverride;
+        import('./state.js').then(m => {
+            m.setContactMeta(contactId, { _descOverride: null });
+        });
+        render();
     }
     else if (action === 'close-app') {
         const modal = document.getElementById('imessage-modal');
