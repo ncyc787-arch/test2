@@ -356,7 +356,7 @@ function viewContactInfo(contactId) {
             </div>`;
         })()}
     </div>
-    `, 'contact-info', 'im-body-fill');
+    `, 'contact-info', 'im-body-fill im-body-scrollable');
 }
 
 function viewRpEvents() {
@@ -368,37 +368,39 @@ function viewRpEvents() {
         : 'не создавалось';
     const manualLbl = rp.manualEdit ? ' (отредактировано вручную)' : '';
 
-    return `<div class="im-view">
-        <div class="im-head">
-            <button class="im-back" data-im-action="back-to-settings">‹</button>
-            <div class="im-title">События RP</div>
-            <button class="im-back" data-im-action="close-app" title="Закрыть iMessage" style="font-size:18px">✕</button>
+    return wrap(`
+    <div class="im-header im-header-chat">
+        <button class="im-header-btn im-back" data-im-action="back-to-settings">${ICONS.back}</button>
+        <div class="im-chat-header-body" style="pointer-events:none">
+            <div class="im-chat-header-name">События RP</div>
         </div>
-        <div class="im-settings">
-            <div class="im-set-hint" style="padding:12px;background:rgba(100,150,255,.06);border-radius:8px;margin-bottom:8px">
-                Это саммари того, что происходит в основном RP-чате: события, отношения, сюжетные линии. <b>Видят ВСЕ контакты</b> (они «в курсе» твоей жизни).
-                <br><br>
-                <b>Зачем:</b> если вчера в RP ты с кем-то встречалась, поссорилась, сходила на свидание — контакт в iMessage будет знать об этом и не выдумает херню.
-                <br><br>
-                Можно сгенерировать автоматически из последних ~100 сообщений RP-чата, или написать/отредактировать вручную. Если отредактировал вручную — пометка <i>«отредактировано вручную»</i> появится рядом.
-            </div>
-
-            <div class="im-set-field">
-                <span>Последняя генерация: <b>${lastGenLbl}</b>${manualLbl}</span>
-            </div>
-
-            <label class="im-set-field">
-                <span>Текст саммари (можно редактировать):</span>
-                <textarea id="im-rp-summary-text" class="im-set-input" rows="12" style="font-family:-apple-system,system-ui,sans-serif;line-height:1.5" placeholder="Например: 'Лили вчера сходила на свидание с Хоупенсом, было неловко. Аякс узнал и взбесился. На работе — конфликт с боссом...'">${esc(rp.text || '')}</textarea>
-            </label>
-
-            <div class="im-set-row">
-                <button class="im-set-btn" data-im-action="gen-rp-summary" style="flex:2">🔄 Сгенерировать из RP-чата</button>
-                <button class="im-set-btn" data-im-action="save-rp-summary" style="flex:1">💾 Сохранить вручную</button>
-            </div>
-            ${hasText ? `<button class="im-set-btn small" data-im-action="clear-rp-summary" style="color:#ff453a">Очистить</button>` : ''}
+        <span class="im-header-btn" data-im-action="close-app" title="Закрыть iMessage">${ICONS.close}</span>
+    </div>
+    <div class="im-settings">
+        <div class="im-set-hint" style="padding:12px;background:rgba(100,150,255,.06);border-radius:8px;margin-bottom:8px">
+            Это саммари того, что происходит в основном RP-чате: события, отношения, сюжетные линии. <b>Видят ВСЕ контакты</b> (они «в курсе» твоей жизни).
+            <br><br>
+            <b>Зачем:</b> если вчера в RP ты с кем-то встречалась, поссорилась, сходила на свидание — контакт в iMessage будет знать об этом и не выдумает херню.
+            <br><br>
+            Можно сгенерировать автоматически из последних ~100 сообщений RP-чата, или написать/отредактировать вручную. Если отредактировал вручную — пометка <i>«отредактировано вручную»</i> появится рядом.
         </div>
-    </div>`;
+
+        <div class="im-set-field">
+            <span>Последняя генерация: <b>${lastGenLbl}</b>${manualLbl}</span>
+        </div>
+
+        <label class="im-set-field">
+            <span>Текст саммари (можно редактировать):</span>
+            <textarea id="im-rp-summary-text" class="im-set-input" rows="12" style="font-family:-apple-system,system-ui,sans-serif;line-height:1.5" placeholder="Например: 'Лили вчера сходила на свидание с Хоупенсом, было неловко. Аякс узнал и взбесился. На работе — конфликт с боссом...'">${esc(rp.text || '')}</textarea>
+        </label>
+
+        <div class="im-set-row" style="flex-wrap:wrap">
+            <button class="im-set-btn" data-im-action="gen-rp-summary" style="flex:2;min-width:140px">🔄 Сгенерировать из RP-чата</button>
+            <button class="im-set-btn" data-im-action="save-rp-summary" style="flex:1;min-width:100px">💾 Сохранить вручную</button>
+        </div>
+        ${hasText ? `<button class="im-set-btn small" data-im-action="clear-rp-summary" style="color:#ff453a">Очистить</button>` : ''}
+    </div>
+    `, 'rp-events', 'im-body-fill im-body-scrollable');
 }
 
 function viewSettings() {
@@ -649,7 +651,7 @@ function viewSettings() {
         <h3 class="im-set-section">Опасная зона</h3>
         <button class="im-set-btn danger" data-im-action="reset-state">Сбросить всё в этом чате</button>
     </div>
-    `, 'settings', 'im-body-fill');
+    `, 'settings', 'im-body-fill im-body-scrollable');
 }
 
 function viewMe() {
@@ -702,7 +704,7 @@ function viewMe() {
             <textarea class="im-set-input" data-im-set-deep="profile.extraBio" rows="3">${esc(profile.extraBio || '')}</textarea>
         </label>
     </div>
-    `, 'me', 'im-body-fill');
+    `, 'me', 'im-body-fill im-body-scrollable');
 }
 
 // ══════════════════════════════════════════════════════════

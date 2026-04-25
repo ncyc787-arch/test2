@@ -104,6 +104,7 @@
 .im-app-body::-webkit-scrollbar { width: 4px; }
 .im-app-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,.2); border-radius: 2px; }
 .im-body-fill { overflow: hidden; }
+.im-body-fill.im-body-scrollable { overflow-y: auto; -webkit-overflow-scrolling: touch; }
 
 /* ── HEADER ── */
 .im-header {
@@ -1068,5 +1069,128 @@ select.im-set-input option {
         height: 100dvh !important;
         max-height: 100dvh !important;
         border-radius: 0 !important;
+        border: none !important;
+    }
+
+    /* Header — more compact on mobile */
+    .im-header { padding: 10px 12px 8px; }
+    .im-header-main { padding-top: 12px; }
+
+    /* Scrollable views — ensure they actually scroll on iOS */
+    .im-app-body.im-body-scrollable {
+        overflow-y: auto !important;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    /* Settings — needs bottom padding for safe area */
+    .im-settings {
+        padding: 14px 16px 40px;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    /* Contact info — scrollable */
+    .im-contact-info {
+        padding: 20px 16px 40px;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    /* Bigger tap targets */
+    .im-btn-row {
+        padding: 15px 16px;
+        font-size: 16px;
+    }
+    .im-set-btn {
+        padding: 12px 16px;
+        font-size: 15px;
+        min-height: 44px;
+    }
+    .im-set-btn.small {
+        padding: 10px 14px;
+        font-size: 13px;
+        min-height: 40px;
+    }
+
+    /* Inputs — bigger for touch */
+    .im-set-input {
+        padding: 12px 14px;
+        font-size: 16px; /* prevents iOS zoom on focus */
+        min-height: 44px;
+    }
+    textarea.im-set-input {
+        min-height: 60px;
+    }
+    select.im-set-input {
+        min-height: 44px;
+    }
+
+    /* Set rows — wrap on narrow screens */
+    .im-set-row {
+        flex-wrap: wrap;
+    }
+
+    /* Chat input — comfy on mobile */
+    .im-chat-input {
+        padding: 8px 10px 12px;
+        padding-bottom: max(12px, env(safe-area-inset-bottom, 12px));
+    }
+    .im-chat-field {
+        font-size: 16px;
+    }
+
+    /* Chat messages */
+    .im-msg {
+        max-width: 85%;
+        font-size: 15px;
+    }
+
+    /* Sticker panel — taller on mobile */
+    .im-sticker-panel {
+        max-height: 55%;
+    }
+    .im-sticker-grid {
+        grid-template-columns: repeat(4, 1fr);
+        gap: 6px;
+        padding: 8px;
+    }
+
+    /* FAB — slightly smaller */
+    #imessage-fab {
+        width: 50px;
+        height: 50px;
+    }
+
+    /* Delete/reroll — always visible on mobile */
+    .im-msg-reroll { opacity: 0.5; right: -24px; }
+    .im-msg-delete { opacity: 0.4; }
+
+    /* List rows — more spacious */
+    .im-list-row {
+        padding: 12px 14px;
+    }
+
+    /* Fix checkbox row on mobile */
+    .im-set-field.row {
+        min-height: 44px;
+    }
+    .im-set-field.row input[type="checkbox"] {
+        width: 22px; height: 22px;
+    }
+}
+
+/* Safe area insets for notched phones */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+    @media (max-width: 500px) {
+        .im-settings {
+            padding-bottom: calc(32px + env(safe-area-inset-bottom));
+        }
+        .im-contact-info {
+            padding-bottom: calc(32px + env(safe-area-inset-bottom));
+        }
+        .im-chat-input {
+            padding-bottom: calc(10px + env(safe-area-inset-bottom));
+        }
+        .im-list {
+            padding-bottom: env(safe-area-inset-bottom);
+        }
     }
 }
