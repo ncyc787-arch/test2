@@ -4,7 +4,7 @@
 
 import { eventSource, event_types } from '../../../../script.js';
 import { reloadRoster, getRoster } from './roster.js';
-import { loadState, getSettings } from './state.js';
+import { loadState, getSettings, saveSettings } from './state.js';
 import { render, handleAction, updateFabBadge, handleFileInput, handleSettingChange } from './ui.js';
 import {
     syncToMainChat, syncFromMainChat, clearMainChatInjection, debugInjection,
@@ -12,6 +12,132 @@ import {
 } from './engine.js';
 
 const LOG = '[iMessage]';
+
+// ══════════════════════════════════════════════════════════
+// ПАНЕЛЬКА РАСШИРЕНИЯ (Extensions sidebar)
+// ══════════════════════════════════════════════════════════
+
+function injectExtensionPanel() {
+    const container = document.getElementById('imessage-ext-container')
+        || document.getElementById('extensions_settings2')
+        || document.getElementById('extensions_settings');
+    if (!container) {
+        console.warn(LOG, 'extensions_settings container not found, panel skipped');
+        return;
+    }
+    if (document.getElementById('imessage-ext-drawer')) return;
+
+    const settings = getSettings();
+
+    // ── inline-drawer (стандартный паттерн ST) ──
+    const inlineDrawer = document.createElement('div');
+    inlineDrawer.id = 'imessage-ext-drawer';
+    inlineDrawer.classList.add('inline-drawer');
+    container.append(inlineDrawer);
+
+    // Toggle (заголовок)
+    const inlineDrawerToggle = document.createElement('div');
+    inlineDrawerToggle.classList.add('inline-drawer-toggle', 'inline-drawer-header');
+
+    const extensionName = document.createElement('b');
+    extensionName.textContent = '📱 iMessage';
+
+    const inlineDrawerIcon = document.createElement('div');
+    inlineDrawerIcon.classList.add('inline-drawer-icon', 'fa-solid', 'fa-circle-chevron-down', 'down');
+
+    inlineDrawerToggle.append(extensionName, inlineDrawerIcon);
+
+    // Content
+    const inlineDrawerContent = document.createElement('div');
+    inlineDrawerContent.classList.add('inline-drawer-content');
+
+    // Галочка 1: Включить iMessage
+    const enabledLabel = document.createElement('label');
+    enabledLabel.classList.add('checkbox_label');
+    enabledLabel.style.marginBottom = '6px';
+
+    const enabledCb = document.createElement('input');
+    enabledCb.id = 'imessage-ext-enabled';
+    enabledCb.type = 'checkbox';
+    enabledCb.checked = settings.enabled !== false;
+
+    const enabledText = document.createElement('span');
+    enabledText.textContent = 'Включить iMessage';
+    enabledLabel.append(enabledCb, enabledText);
+
+    const enabledHint = document.createElement('small');
+    enabledHint.style.cssText = 'display:block;margin-bottom:10px;opacity:.7;padding-left:24px';
+    enabledHint.textContent = 'Выключи чтобы полностью отключить расширение без перезагрузки.';
+
+    // Галочка 2: Скрыть FAB
+    const hideFabLabel = document.createElement('label');
+    hideFabLabel.classList.add('checkbox_label');
+    hideFabLabel.style.marginBottom = '6px';
+
+    const hideFabCb = document.createElement('input');
+    hideFabCb.id = 'imessage-ext-hide-fab';
+    hideFabCb.type = 'checkbox';
+    hideFabCb.checked = !!settings.hideFab;
+
+    const hideFabText = document.createElement('span');
+    hideFabText.textContent = 'Скрыть кнопку на экране';
+    hideFabLabel.append(hideFabCb, hideFabText);
+
+    const hideFabHint = document.createElement('small');
+    hideFabHint.style.cssText = 'display:block;opacity:.7;padding-left:24px';
+    hideFabHint.textContent = 'Убирает круглую иконку. Расширение продолжает работать в фоне.';
+
+    inlineDrawerContent.append(enabledLabel, enabledHint, hideFabLabel, hideFabHint);
+    inlineDrawer.append(inlineDrawerToggle, inlineDrawerContent);
+
+    // ── События ──
+    enabledCb.addEventListener('change', () => {
+        const s = getSettings();
+        s.enabled = enabledCb.checked;
+        saveSettings();
+        applyEnabledState();
+    });
+
+    hideFabCb.addEventListener('change', () => {
+        const s = getSettings();
+        s.hideFab = hideFabCb.checked;
+        saveSettings();
+        applyFabVisibility();
+    });
+}
+
+function applyEnabledState() {
+    const settings = getSettings();
+    const enabled = settings.enabled !== false;
+    const fab = document.getElementById('imessage-fab');
+    const modal = document.getElementById('imessage-modal');
+
+    if (enabled) {
+        // Включаем — показываем FAB (если не скрыт) и разрешаем работу
+        applyFabVisibility();
+        startAutoMessageLoop();
+        console.log(LOG, 'расширение включено');
+    } else {
+        // Выключаем — прячем всё, останавливаем автосообщения
+        if (fab) fab.style.display = 'none';
+        if (modal) modal.classList.remove('open');
+        stopAutoMessageLoop();
+        clearMainChatInjection();
+        console.log(LOG, 'расширение выключено');
+    }
+}
+
+function applyFabVisibility() {
+    const settings = getSettings();
+    const fab = document.getElementById('imessage-fab');
+    if (!fab) return;
+    // FAB видим только если расширение включено И fab не скрыт
+    if (settings.enabled !== false && !settings.hideFab) {
+        fab.style.display = '';
+    } else {
+        fab.style.display = 'none';
+    }
+}
 
 function injectFab() {
     if (document.getElementById('imessage-fab')) return;
@@ -122,6 +248,7 @@ function injectModal() {
 }
 
 async function openApp() {
+    if (!isEnabled()) return;
     const modal = document.getElementById('imessage-modal');
     if (!modal) return;
     modal.classList.add('open');
@@ -177,6 +304,17 @@ function bindEvents() {
     modal.addEventListener('change', (e) => {
         if (e.target.tagName === 'INPUT' && e.target.type === 'file') {
             handleFileInput(e.target);
+        } else if (e.target.dataset?.imCharToggle !== undefined) {
+            // Чекбокс выбора персонажа для character-cards
+            const charName = e.target.dataset.imCharToggle;
+            const settings = getSettings();
+            if (!Array.isArray(settings.characterContacts)) settings.characterContacts = [];
+            if (e.target.checked) {
+                if (!settings.characterContacts.includes(charName)) settings.characterContacts.push(charName);
+            } else {
+                settings.characterContacts = settings.characterContacts.filter(n => n !== charName);
+            }
+            import('./state.js').then(m => m.saveSettings());
         } else if (e.target.dataset?.imSet || e.target.dataset?.imSetDeep) {
             handleSettingChange(e.target);
         }
@@ -239,44 +377,54 @@ function onMessageReceivedInMainChat() {
     }, 300);
 }
 
+function isEnabled() {
+    return getSettings().enabled !== false;
+}
+
 async function init() {
+    // Панелька всегда инжектится — чтобы можно было включить/выключить
+    injectExtensionPanel();
     injectFab();
     injectModal();
     bindEvents();
 
+    // Применяем начальное состояние enabled/hideFab
+    applyEnabledState();
+
     if (eventSource && event_types) {
-        eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
-        if (event_types.APP_READY) eventSource.on(event_types.APP_READY, onChatChanged);
+        eventSource.on(event_types.CHAT_CHANGED, () => { if (isEnabled()) onChatChanged(); });
+        if (event_types.APP_READY) eventSource.on(event_types.APP_READY, () => { if (isEnabled()) onChatChanged(); });
 
         if (event_types.GENERATION_STARTED) {
             eventSource.on(event_types.GENERATION_STARTED, () => {
+                if (!isEnabled()) return;
                 try { syncToMainChat(); } catch {}
             });
         }
         if (event_types.CHAT_COMPLETION_PROMPT_READY) {
             eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, (eventData) => {
+                if (!isEnabled()) return;
                 injectIntoChatCompletion(eventData);
             });
         }
         if (event_types.MESSAGE_RECEIVED) {
-            eventSource.on(event_types.MESSAGE_RECEIVED, onMessageReceivedInMainChat);
+            eventSource.on(event_types.MESSAGE_RECEIVED, () => { if (isEnabled()) onMessageReceivedInMainChat(); });
         }
         if (event_types.MESSAGE_EDITED) {
-            eventSource.on(event_types.MESSAGE_EDITED, onMessageReceivedInMainChat);
+            eventSource.on(event_types.MESSAGE_EDITED, () => { if (isEnabled()) onMessageReceivedInMainChat(); });
         }
     }
 
     setTimeout(async () => {
+        if (!isEnabled()) return;
         try { await reloadRoster(); } catch (e) { console.error(LOG, e); }
         updateFabBadge();
         syncToMainChat();
-        // Первичный синк — подтянуть виртуальные сообщения из существующего чата
         syncFromMainChat();
-        // Запускаем таймер автосообщений
         startAutoMessageLoop();
     }, 1500);
 
-    console.log(LOG, 'loaded v1.1.0. Console: imOpen() / imDebug() / imReset() / imReload() / imInject() / imSyncFromMain()');
+    console.log(LOG, 'loaded v1.2.0. Console: imOpen() / imDebug() / imReset() / imReload() / imInject() / imSyncFromMain()');
 }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

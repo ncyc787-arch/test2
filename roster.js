@@ -83,6 +83,24 @@ function entryToContact(entry, idx) {
     };
 }
 
+function charToContact(char, idx) {
+    const name = (char.name || '').trim() || `Персонаж ${idx + 1}`;
+    const descParts = [char.description || ''];
+    if (char.personality) descParts.push('Personality: ' + char.personality);
+    if (char.scenario) descParts.push('Scenario: ' + char.scenario);
+    const content = descParts.filter(Boolean).join('\n').trim();
+    const slug = name.toLowerCase().replace(/[^a-zа-я0-9]/gi, '').slice(0, 12);
+    const id = `char_${idx}_${slug}`;
+    return {
+        id, name,
+        rawDescription: content,
+        rawKeys: [name],
+        rawComment: name,
+        _gradient: gradientFor(id),
+        _initial: (name[0] || '?').toUpperCase(),
+    };
+}
+
 // ── Упрощённый парсинг через LLM: только writeStyle + imagePrompt ──
 // Всё остальное (характер, возраст, отношения) — берётся из сырого описания при каждом ответе.
 async function generateContactMeta(rawContact) {
@@ -94,7 +112,7 @@ async function generateContactMeta(rawContact) {
         return heuristicMeta(rawContact);
     }
 
-    const prompt = `Analyze a lorebook character and extract TWO fields for an iMessage simulator.
+    const prompt = `Analyze a lorebook character and extract THREE fields for an iMessage simulator.
 
 NAME: ${rawContact.name}
 
@@ -104,7 +122,8 @@ ${desc}
 Return ONLY valid JSON, no markdown, no \`\`\`:
 {
   "styleNote": "1-2 sentences describing HOW this character texts in a messenger — message length (short/long), pace (instant replies/slow), tone (rude/tender/formal/profane), emoji usage (often/rarely/never), quirks (typos, caps, abbreviations). Base strictly on the character description above.",
-  "imagePrompt": "english prompt for generating their photo, 15-25 words, realistic messenger photo. Describe appearance if available, otherwise infer from age/role/style."
+  "imagePrompt": "english prompt for generating their photo, 15-25 words, realistic messenger photo. Describe appearance if available, otherwise infer from age/role/style.",
+  "stickerFrequency": "none|rare|normal — how likely this character sends cute stickers. 'none' for serious/formal/stoic characters. 'rare' for occasional. 'normal' for casual/playful."
 }`;
 
     try {
@@ -114,9 +133,11 @@ Return ONLY valid JSON, no markdown, no \`\`\`:
         const m = txt.match(/\{[\s\S]*\}/);
         if (!m) throw new Error('JSON не найден');
         const card = JSON.parse(m[0]);
+        const freq = String(card.stickerFrequency || 'normal').trim().toLowerCase();
         return {
             styleNote: String(card.styleNote || '').trim() || 'Normal texting pace, no special quirks.',
             imagePrompt: String(card.imagePrompt || '').trim() || `${rawContact.name}, photorealistic portrait, casual`,
+            stickerFrequency: ['none', 'rare', 'normal'].includes(freq) ? freq : 'normal',
         };
     } catch (e) {
         console.warn('[iMessage] LLM parse failed, heuristic:', e.message);
@@ -128,6 +149,7 @@ function heuristicMeta(rawContact) {
     return {
         styleNote: 'Normal texting pace, no special quirks.',
         imagePrompt: `${rawContact.name}, photorealistic portrait, casual messenger photo`,
+        stickerFrequency: 'normal',
     };
 }
 
@@ -138,6 +160,50 @@ export async function reloadRoster() {
     const newOrder = [];
     const newAllDescs = {};
 
+    // ── Ветка: карточки персонажей ──
+    if (settings.rosterSource === 'character-cards') {
+        let characters = [];
+        try {
+            const ctx = (typeof SillyTavern?.getContext === 'function') ? SillyTavern.getContext() : {};
+            characters = ctx.characters || [];
+        } catch {}
+
+        const selected = new Set(settings.characterContacts || []);
+        const filtered = selected.size
+            ? characters.filter(ch => selected.has(ch.name))
+            : characters;
+
+        console.log(`[iMessage] Карточки персонажей: ${filtered.length} из ${characters.length}`);
+
+        for (let i = 0; i < filtered.length; i++) {
+            const raw = charToContact(filtered[i], i);
+            newAllDescs[raw.id] = { name: raw.name, description: raw.rawDescription };
+
+            let meta = getCachedContactMeta('_chars', raw.id, raw.rawDescription) || getContactMeta(raw.id);
+            let needsParse = false;
+            if (!meta) {
+                meta = heuristicMeta(raw);
+                needsParse = true;
+            }
+            const perChatMeta = getContactMeta(raw.id) || {};
+            newRoster[raw.id] = {
+                ...meta,
+                name: raw.name,
+                _gradient: raw._gradient,
+                _initial: raw._initial,
+                _rawDescription: raw.rawDescription,
+                _rawKeys: raw.rawKeys,
+                _lorebookName: '_chars',
+                _needsLLMParse: needsParse,
+                ...(perChatMeta._descOverride ? { _descOverride: perChatMeta._descOverride } : {}),
+                ...(perChatMeta.styleNote ? { styleNote: perChatMeta.styleNote } : {}),
+                ...(perChatMeta._noReply != null ? { _noReply: perChatMeta._noReply } : {}),
+                ...(perChatMeta.stickerFrequency ? { stickerFrequency: perChatMeta.stickerFrequency } : {}),
+            };
+            newOrder.push(raw.id);
+        }
+    } else {
+    // ── Ветка: лорбуки (chat-lorebook / named-lorebook) ──
     const lbName = settings.rosterSource === 'chat-lorebook'
         ? getChatLorebookName()
         : settings.lorebookName;
@@ -165,9 +231,6 @@ export async function reloadRoster() {
     for (let i = 0; i < entries.length; i++) {
         const raw = entryToContact(entries[i], i);
 
-        // В ALL_RAW_DESCRIPTIONS идут ВСЕ записи — включая будущие скрытые.
-        // Это нужно чтобы LLM знала про врагов/друзей/соперников даже если
-        // юзер спрятал их из списка чатов.
         newAllDescs[raw.id] = { name: raw.name, description: raw.rawDescription };
 
         let meta = getCachedContactMeta(lbName, raw.id, raw.rawDescription) || getContactMeta(raw.id);
@@ -176,7 +239,6 @@ export async function reloadRoster() {
             meta = heuristicMeta(raw);
             needsParse = true;
         }
-        // Per-chat overrides (user-edited styleNote, description override)
         const perChatMeta = getContactMeta(raw.id) || {};
         newRoster[raw.id] = {
             ...meta,
@@ -187,12 +249,14 @@ export async function reloadRoster() {
             _rawKeys: raw.rawKeys,
             _lorebookName: lbName,
             _needsLLMParse: needsParse,
-            // Apply user overrides from per-chat storage
             ...(perChatMeta._descOverride ? { _descOverride: perChatMeta._descOverride } : {}),
             ...(perChatMeta.styleNote ? { styleNote: perChatMeta.styleNote } : {}),
+            ...(perChatMeta._noReply != null ? { _noReply: perChatMeta._noReply } : {}),
+            ...(perChatMeta.stickerFrequency ? { stickerFrequency: perChatMeta.stickerFrequency } : {}),
         };
         newOrder.push(raw.id);
     }
+    } // end else (lorebook branch)
 
     CURRENT_ROSTER = newRoster;
     CURRENT_ORDER = newOrder;

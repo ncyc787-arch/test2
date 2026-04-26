@@ -327,6 +327,70 @@ function parseQuoteAt(text, startIdx) {
     }
     return null;
 }
+// ══════════════════════════════════════════════════════════
+// [PHONE] ТЕГ-ПАРСЕР (приоритетный)
+// Формат: [PHONE from="Имя"]текст[/PHONE]
+// ══════════════════════════════════════════════════════════
+
+const PHONE_TAG_RE = /\[PHONE\s+from=["']([^"']+)["']\]([\s\S]*?)\[\/PHONE\]/gi;
+
+function extractPhoneTags(rpText) {
+    if (!rpText || typeof rpText !== 'string') return [];
+    const results = [];
+    let m;
+    const re = new RegExp(PHONE_TAG_RE.source, PHONE_TAG_RE.flags);
+    while ((m = re.exec(rpText)) !== null) {
+        const contactName = m[1].trim();
+        const body = m[2].trim();
+        if (!contactName || !body) continue;
+
+        const items = [];
+        // Разбиваем по двойным переносам на отдельные сообщения
+        const parts = body.split(/\n\n+/).map(p => p.trim()).filter(Boolean);
+        for (const part of parts) {
+            // Ловим [photo: ...] внутри
+            const photoRe = /\[photo:\s*([^\]]+)\]/gi;
+            const photoMatches = [...part.matchAll(photoRe)];
+            for (const pm of photoMatches) {
+                const prompt = pm[1].trim();
+                if (prompt.length >= 3) {
+                    items.push({ type: 'photo', prompt });
+                }
+            }
+            // Чистый текст (без [photo:...])
+            const cleanText = part.replace(/\[photo:\s*[^\]]+\]/gi, '').trim();
+            if (cleanText.length >= 2) {
+                // Если внутри тега несколько строк через одинарный \n — каждая отдельное сообщение
+                const lines = cleanText.split(/\n/).map(l => l.trim()).filter(l => l.length >= 2);
+                for (const line of lines) {
+                    const reason = detectRpParagraph(line);
+                    if (reason) {
+                        console.warn(`[iMessage] [PHONE] парсер отбросил: ${reason}. Текст: "${line.slice(0, 80)}"`);
+                        continue;
+                    }
+                    items.push({ type: 'text', text: line });
+                }
+            }
+        }
+        if (items.length) {
+            results.push({ contactName, items, _explicit: true });
+        }
+    }
+    return results;
+}
+
+// Удаляет [PHONE] теги из текста, заменяя на короткую фразу.
+function stripPhoneTags(text, replacement) {
+    return text.replace(
+        /\[PHONE\s+from=["'][^"']+["']\][\s\S]*?\[\/PHONE\]/gi,
+        replacement
+    );
+}
+
+// ══════════════════════════════════════════════════════════
+// REGEX-ПАРСЕР (fallback)
+// ══════════════════════════════════════════════════════════
+
 // Парсит текст из основного чата ST и ищет "виртуальные сообщения".
 // Поддерживает три источника цитат:
 //   1) "Имя [глагол]: цитата" — явное приписывание
@@ -1179,22 +1243,59 @@ export async function syncFromMainChat() {
             if (!msg || msg.is_user || msg.is_system) continue;
             const text = String(msg.mes || '');
 
-            // Выбор парсера: LLM (если включён и стоит тратить токены) либо regex
+            // Выбор парсера: [PHONE] теги (приоритет) → LLM → regex (fallback)
             let extracted = [];
+            let usedParser = '';
             const botName = msg.name || c.name2 || '';
             const prevText = i > 0 ? String(chat[i - 1]?.mes || '').slice(-500) : '';
-            if (settings.useLLMParser !== false && isExtraLLMConfigured() && rpTextWorthAnalyzing(text)) {
+
+            // 1) [PHONE] теги — приоритет
+            extracted = extractPhoneTags(text);
+            if (extracted.length) {
+                usedParser = 'phone-tag';
+                console.log(`[iMessage] [PHONE]-парсер: ${extracted.length} групп сообщений`);
+                // Очистка поста: заменяем теги на короткую фразу
+                const langReplace = {
+                    russian: '\n*написал сообщение в телефоне*\n',
+                    english: '\n*sent a text message*\n',
+                    japanese: '\n*スマホでメッセージを送った*\n',
+                    spanish: '\n*envió un mensaje de texto*\n',
+                    french: '\n*a envoyé un SMS*\n',
+                    german: '\n*hat eine Nachricht gesendet*\n',
+                    chinese: '\n*发了一条短信*\n',
+                    korean: '\n*문자를 보냈다*\n',
+                };
+                const lang = (settings.messageLanguage || 'russian').toLowerCase();
+                const replacement = langReplace[lang] || langReplace.russian;
+                const cleanedMes = stripPhoneTags(text, replacement);
+                if (cleanedMes !== text) {
+                    msg.mes = cleanedMes;
+                    try {
+                        if (typeof c.saveChatDebounced === 'function') c.saveChatDebounced();
+                        else if (typeof c.saveChat === 'function') c.saveChat();
+                    } catch (e) { console.warn('[iMessage] saveChat after strip failed:', e); }
+                }
+            }
+
+            // 2) LLM-парсер (fallback если нет [PHONE] тегов)
+            if (!extracted.length && settings.useLLMParser !== false && isExtraLLMConfigured() && rpTextWorthAnalyzing(text)) {
                 const llmResult = await extractViaLLM(text, botName, prevText);
                 if (llmResult !== null) {
                     extracted = llmResult;
+                    usedParser = 'llm';
                     if (extracted.length) console.log(`[iMessage] LLM-парсер: ${extracted.length} групп сообщений`);
                 } else {
                     // LLM упал — fallback на regex
                     extracted = extractVirtualMessagesFromText(text);
+                    usedParser = 'regex-fallback';
                     if (extracted.length) console.log(`[iMessage] regex-fallback: ${extracted.length} групп`);
                 }
-            } else {
+            }
+
+            // 3) Regex (fallback если нет ни [PHONE] ни LLM)
+            if (!extracted.length && !usedParser) {
                 extracted = extractVirtualMessagesFromText(text);
+                usedParser = 'regex';
                 if (extracted.length) console.log(`[iMessage] regex-парсер: ${extracted.length} групп`);
             }
             for (const rec of extracted) {
@@ -1292,6 +1393,11 @@ export async function generateContactReply(contactId, opts = {}) {
     const ROSTER = getRoster();
     const contact = ROSTER[contactId];
     if (!contact) return 0;
+
+    if (contact._noReply) {
+        console.log('[iMessage] Contact', contactId, 'has _noReply flag, skipping reply');
+        return 0;
+    }
 
     try { await ensureContactCard(contactId); } catch {}
 
@@ -1432,9 +1538,16 @@ RULES:
 — To send a photo (rarely, ~1 per 10-15 messages) — separate message [IMG:english description, 10-20 words].
 — No "${contact.name}:", no markdown, no <think>.${languageLine}
 
-STICKERS (optional, just emoji-reactions, NOT related to character personality/profession):
+${(() => {
+    const sf = contact.stickerFrequency || 'normal';
+    if (sf === 'none') return '';
+    if (sf === 'rare') return `STICKERS (optional, just emoji-reactions, NOT related to character personality/profession):
+VERY RARELY send a sticker (max once per 15+ messages, only if extremely fitting). On its own line [STICKER:id].
+${stickerCatalogForPrompt()}`;
+    return `STICKERS (optional, just emoji-reactions, NOT related to character personality/profession):
 Send a sticker if appropriate, NO MORE than once per 4-6 messages. On its own line [STICKER:id].
 ${stickerCatalogForPrompt()}`;
+})()}`;
 
     const lastMsg = history[history.length - 1];
     const visionImages = (lastMsg && lastMsg.from === 'user' && lastMsg.image) ? [lastMsg.image] : [];
@@ -1696,23 +1809,26 @@ export function syncToMainChat() {
         lines.push(`## CRITICAL: ${contact.name} (the current main-chat character) is ALSO texting ${userLabel} in iMessage RIGHT NOW.`);
         lines.push(`${contact.name} in the main chat and ${contact.name} in iMessage are the SAME person — stay consistent: same memories, same feelings, same stated facts. If ${userLabel} references something from the texts, ${contact.name} remembers it.`);
         lines.push('');
-        lines.push(`If ${contact.name} wants to SEND a text message mid-reply, use this exact format anywhere in the reply:`);
-        lines.push(`${contact.name} texts: "message text here"`);
-        lines.push(`or: ${contact.name} sends a message: "text"`);
-        lines.push(`(in Russian also valid: ${contact.name} написал: "текст" / пишет в телефон: "текст")`);
-        lines.push(`The extension will auto-mirror any such line into the iMessage app as a real sent message. The format must be: Name + verb + colon + quoted text.`);
+        if (settings.phoneTagInject !== false) {
+        const langInject = (settings.messageLanguage || 'russian').toLowerCase();
+        if (langInject === 'russian') {
+            lines.push(`Когда ${contact.name} отправляет SMS/сообщение в мессенджере — оформи СТРОГО так:`);
+            lines.push(`[PHONE from="${contact.name}"]текст сообщения[/PHONE]`);
+            lines.push(`Несколько сообщений подряд — каждое на отдельной строке внутри тега.`);
+            lines.push(`Фото/селфи: [PHONE from="${contact.name}"][photo: описание на английском, 10-20 слов][/PHONE]`);
+        } else {
+            lines.push(`When ${contact.name} sends a text/iMessage/SMS, use this EXACT format:`);
+            lines.push(`[PHONE from="${contact.name}"]message text[/PHONE]`);
+            lines.push(`Multiple messages — each on its own line inside the tag.`);
+            lines.push(`Photos/selfies: [PHONE from="${contact.name}"][photo: english description, 10-20 words][/PHONE]`);
+        }
+        lines.push(`The tag will be auto-parsed into the iMessage app and removed from the post.`);
         lines.push('');
-        lines.push(`If ${contact.name} wants to SEND A PHOTO/SELFIE in iMessage, use ONE of these formats — the extension auto-generates the actual image:`);
-        lines.push(`  • ${contact.name} sends photo: "short english description, 10-20 words"`);
-        lines.push(`  • ${contact.name} sends photo: "short english description for image gen"`);
-        lines.push(`  • ${contact.name} texts: "[photo: english description]"    ← tag inside quotes also works`);
-        lines.push(`  • ${contact.name} texts: "message text [photo: english description] more text"   ← mix text + photo in one reply`);
-        lines.push(`Description should be concise English suitable for an image generator (e.g. "selfie in locker room, wet hair, towel on shoulders, smirk").`);
-        lines.push('');
-        lines.push(`⚠ The quoted text MUST be a real SMS — what a person actually types with their thumbs. NOT narrative, NOT a paragraph, NOT third-person prose, NOT a meta-instruction.`);
-        lines.push(`❌ WRONG: ${contact.name} texts: "She shared her traumatic story. We should respond sympathetically."`);
-        lines.push(`✅ CORRECT: ${contact.name} texts: "damn that's heavy. I'm here"`);
-        lines.push(`✅ CORRECT: ${contact.name} sends photo: "selfie in locker room, wet hair"`);
+        lines.push(`⚠ Inside [PHONE] — ONLY real SMS text (what a person types with thumbs). NO narrative, NO third-person prose.`);
+        lines.push(`❌ WRONG: [PHONE from="${contact.name}"]She shared her traumatic story. We should respond sympathetically.[/PHONE]`);
+        lines.push(`✅ CORRECT: [PHONE from="${contact.name}"]damn that's heavy. I'm here[/PHONE]`);
+        lines.push(`✅ CORRECT: [PHONE from="${contact.name}"][photo: selfie in locker room, wet hair][/PHONE]`);
+        }
         lines.push('');
 
         if (summary && olderCount > 0) {
@@ -1742,7 +1858,7 @@ export function syncToMainChat() {
     const otherConvs = activeConvs.filter(c => c.id !== mainBotContactId).slice(0, 6);
     if (otherConvs.length) {
         lines.push(`## Other active iMessage threads (${userLabel} is texting these NPCs in parallel):`);
-        lines.push(`These are NPCs — NOT the main-chat character. You don't play them directly in the main reply, but you know these threads exist and may let them influence the plot. An NPC can send a message by writing their line in the same format: \`NpcName texts: "..."\` — SMS format only (short, first-person, no prose).`);
+        lines.push(`These are NPCs — NOT the main-chat character. You don't play them directly in the main reply, but you know these threads exist and may let them influence the plot.${settings.phoneTagInject !== false ? ' An NPC can send a message using: [PHONE from="NpcName"]message[/PHONE] — SMS format only (short, first-person, no prose).' : ''}`);
         lines.push('');
 
         const othersN = settings.injectOthersLastN || 5;
@@ -1812,7 +1928,7 @@ export function syncToMainChat() {
             chinese: 'Chinese',
             korean: 'Korean',
         }[lang] || lang;
-        lines.push(`## Language: text messages in iMessage are written in ${langHuman}. When you produce \`Name texts: "..."\` lines, the quoted text must be in ${langHuman}.`);
+        lines.push(`## Language: text messages in iMessage are written in ${langHuman}.${settings.phoneTagInject !== false ? ` Inside [PHONE] tags, the text must be in ${langHuman}.` : ` When you produce \`Name texts: "..."\` lines, the quoted text must be in ${langHuman}.`}`);
     }
 
     if (lines.length <= 3) {

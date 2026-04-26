@@ -18,6 +18,7 @@ import {
 import { fetchModels, isExtraLLMConfigured, isImageApiConfigured } from './api.js';
 import { STICKER_PACKS, getPackOrder, stickerUrl, findStickerById, getAllStickers } from './stickers.js';
 import { user_avatar, getThumbnailUrl } from '../../../../script.js';
+import { world_names } from '../../../world-info.js';
 
 // ── SVG ──
 const ICONS = {
@@ -313,6 +314,22 @@ function viewContactInfo(contactId) {
             <textarea class="im-set-input im-contact-edit-style" data-im-contact="${contactId}" data-im-field="styleNote" rows="2" placeholder="Стиль: короткие рубленые фразы / длинные сообщения / с эмодзи / сарказм...">${esc(contact.styleNote || '')}</textarea>
         </div>
 
+        <div class="im-contact-section">
+            <label class="im-set-field row">
+                <input type="checkbox" data-im-contact-flag="noReply" ${contact._noReply ? 'checked' : ''}>
+                <span>Не отвечает (мёртв / пропал / заблокирован)</span>
+            </label>
+        </div>
+
+        <div class="im-contact-section">
+            <div class="im-contact-section-title">Стикеры</div>
+            <select class="im-set-input" data-im-contact-flag="stickerFrequency">
+                <option value="normal" ${(contact.stickerFrequency || 'normal') === 'normal' ? 'selected' : ''}>Обычно (раз в 4-6 сообщений)</option>
+                <option value="rare" ${contact.stickerFrequency === 'rare' ? 'selected' : ''}>Редко (раз в 15+ сообщений)</option>
+                <option value="none" ${contact.stickerFrequency === 'none' ? 'selected' : ''}>Никогда</option>
+            </select>
+        </div>
+
         <button class="im-btn-row" data-im-action="save-contact-edits" data-im-contact="${contactId}" style="background:rgba(52,199,89,.15);color:#34c759;margin-bottom:8px">
             <span>💾 Сохранить изменения</span>
         </button>
@@ -443,14 +460,51 @@ function viewSettings() {
             <select class="im-set-input" data-im-set="rosterSource">
                 <option value="chat-lorebook" ${settings.rosterSource === 'chat-lorebook' ? 'selected' : ''}>Лорбук чата (📕 в ST)</option>
                 <option value="named-lorebook" ${settings.rosterSource === 'named-lorebook' ? 'selected' : ''}>Лорбук по имени</option>
+                <option value="character-cards" ${settings.rosterSource === 'character-cards' ? 'selected' : ''}>Карточки персонажей</option>
             </select>
         </label>
         ${settings.rosterSource === 'named-lorebook' ? `
         <label class="im-set-field">
             <span>Имя лорбука</span>
-            <input type="text" class="im-set-input" data-im-set="lorebookName" value="${esc(settings.lorebookName)}">
+            ${(() => {
+                const wn = (typeof world_names !== 'undefined' && Array.isArray(world_names) && world_names.length)
+                    ? world_names
+                    : null;
+                if (wn) {
+                    return `<select class="im-set-input" data-im-set="lorebookName">
+                        <option value="">— выбери лорбук —</option>
+                        ${wn.map(n => `<option value="${esc(n)}" ${n === settings.lorebookName ? 'selected' : ''}>${esc(n)}</option>`).join('')}
+                    </select>`;
+                }
+                return `<input type="text" class="im-set-input" data-im-set="lorebookName" value="${esc(settings.lorebookName)}">`;
+            })()}
         </label>` : ''}
+        ${settings.rosterSource === 'character-cards' ? `
+        <div class="im-set-field">
+            <span>Выбери персонажей для контактов:</span>
+            <div class="im-char-checklist" style="max-height:200px;overflow-y:auto;margin-top:4px">
+            ${(() => {
+                let chars = [];
+                try {
+                    const ctx = (typeof SillyTavern?.getContext === 'function') ? SillyTavern.getContext() : {};
+                    chars = ctx.characters || [];
+                } catch {}
+                const sel = new Set(settings.characterContacts || []);
+                if (!chars.length) return '<div class="im-set-hint">Нет доступных персонажей</div>';
+                return chars.map(ch => {
+                    const n = ch.name || '???';
+                    return `<label class="im-set-field row" style="margin:2px 0">
+                        <input type="checkbox" data-im-char-toggle="${esc(n)}" ${sel.has(n) ? 'checked' : ''}>
+                        <span>${esc(n)}</span>
+                    </label>`;
+                }).join('');
+            })()}
+            </div>
+        </div>
+        <div class="im-set-hint">Каждая выбранная карточка = один контакт. Описание из description + personality + scenario.</div>
+        ` : `
         <div class="im-set-hint">Каждая запись лорбука = один контакт. Имя из <b>comment</b>, описание из <b>content</b>.</div>
+        `}
         <button class="im-set-btn" data-im-action="reload-roster">Перезагрузить контакты</button>
 
         <h3 class="im-set-section">LLM API ${llmStatus}</h3>
@@ -573,6 +627,12 @@ function viewSettings() {
             <span>Подмешивать переписку iMessage в чат ST</span>
         </label>
         <div class="im-set-hint">Основной бот будет знать о переписке. А если в RP он напишет «Имя: "текст"» или «Имя написал: "текст"» — сообщение появится в iMessage автоматически.</div>
+
+        <label class="im-set-field row">
+            <input type="checkbox" data-im-set="phoneTagInject" ${settings.phoneTagInject !== false ? 'checked' : ''}>
+            <span>Подсказывать боту формат SMS (рекомендуется)</span>
+        </label>
+        <div class="im-set-hint">Бот будет использовать [PHONE] теги для SMS-сообщений в RP. После парсинга теги автоматически удаляются из поста и заменяются коротким описанием.</div>
 
         <label class="im-set-field row">
             <input type="checkbox" data-im-set="useLLMParser" ${settings.useLLMParser !== false ? 'checked' : ''}>
@@ -1013,11 +1073,21 @@ export async function handleAction(action, contactId, evt) {
             delete contact._descOverride;
         }
         contact.styleNote = newStyle;
+        // noReply флаг
+        const noReplyEl = body?.querySelector('[data-im-contact-flag="noReply"]');
+        const noReply = noReplyEl?.checked || false;
+        contact._noReply = noReply;
+        // stickerFrequency
+        const stickerEl = body?.querySelector('[data-im-contact-flag="stickerFrequency"]');
+        const stickerFreq = stickerEl?.value || 'normal';
+        contact.stickerFrequency = stickerFreq;
         // Сохраняем в per-chat contactMeta
         import('./state.js').then(m => {
             m.setContactMeta(contactId, {
                 _descOverride: contact._descOverride || null,
                 styleNote: contact.styleNote || '',
+                _noReply: noReply,
+                stickerFrequency: stickerFreq,
             });
         });
         render();
@@ -1224,7 +1294,7 @@ export function handleSettingChange(input) {
         else if (input.type === 'number') settings[k] = Number(input.value) || 0;
         else settings[k] = input.value;
         saveSettings();
-        if (k === 'injectIntoMain' || k === 'injectPhoneSummary') syncToMainChat();
+        if (k === 'injectIntoMain' || k === 'injectPhoneSummary' || k === 'phoneTagInject') syncToMainChat();
         if (k === 'rosterSource') render();
     } else if (input.dataset.imSetDeep) {
         const path = input.dataset.imSetDeep;

@@ -10,9 +10,14 @@ const META_KEY = 'imessage';
 
 // ── Глобальные настройки расширения ──
 const defaultSettings = () => ({
+    // Мастер-переключатели (панелька расширения)
+    enabled: true,       // false = расширение полностью выключено
+    hideFab: false,      // true = FAB скрыт, но расширение работает в фоне
+
     // Источник контактов
-    rosterSource: 'chat-lorebook',  // 'chat-lorebook' | 'named-lorebook'
+    rosterSource: 'chat-lorebook',  // 'chat-lorebook' | 'named-lorebook' | 'character-cards'
     lorebookName: '',
+    characterContacts: [],  // массив имён выбранных персонажей (для rosterSource='character-cards')
 
     // Extra LLM API (независимый, ВСЕ запросы iMessage идут сюда)
     extraApi: {
@@ -40,6 +45,7 @@ const defaultSettings = () => ({
     // Синк с основным чатом ST
     injectIntoMain: true,
     injectDepth: 4,
+    phoneTagInject: true,  // Подсказывать боту формат [PHONE] для SMS
 
     // Сколько последних сообщений показывать дословно в инжекте
     injectActiveLastN: 10,      // для активного (того с кем RP сейчас)
