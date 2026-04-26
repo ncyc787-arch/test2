@@ -363,12 +363,15 @@ function extractPhoneTags(rpText) {
                 // Если внутри тега несколько строк через одинарный \n — каждая отдельное сообщение
                 const lines = cleanText.split(/\n/).map(l => l.trim()).filter(l => l.length >= 2);
                 for (const line of lines) {
-                    const reason = detectRpParagraph(line);
+                    // Стрипаем бэктики — бот оборачивает текст в ` `, нам нужен чистый текст
+                    const stripped = line.replace(/^`+|`+$/g, '').trim();
+                    if (stripped.length < 2) continue;
+                    const reason = detectRpParagraph(stripped);
                     if (reason) {
-                        console.warn(`[iMessage] [PHONE] парсер отбросил: ${reason}. Текст: "${line.slice(0, 80)}"`);
+                        console.warn(`[iMessage] [PHONE] парсер отбросил: ${reason}. Текст: "${stripped.slice(0, 80)}"`);
                         continue;
                     }
-                    items.push({ type: 'text', text: line });
+                    items.push({ type: 'text', text: stripped });
                 }
             }
         }
@@ -379,13 +382,6 @@ function extractPhoneTags(rpText) {
     return results;
 }
 
-// Удаляет [PHONE] теги из текста, заменяя на короткую фразу.
-function stripPhoneTags(text, replacement) {
-    return text.replace(
-        /\[PHONE\s+from=["'][^"']+["']\][\s\S]*?\[\/PHONE\]/gi,
-        replacement
-    );
-}
 
 // ══════════════════════════════════════════════════════════
 // REGEX-ПАРСЕР (fallback)
@@ -1254,27 +1250,6 @@ export async function syncFromMainChat() {
             if (extracted.length) {
                 usedParser = 'phone-tag';
                 console.log(`[iMessage] [PHONE]-парсер: ${extracted.length} групп сообщений`);
-                // Очистка поста: заменяем теги на короткую фразу
-                const langReplace = {
-                    russian: '\n*написал сообщение в телефоне*\n',
-                    english: '\n*sent a text message*\n',
-                    japanese: '\n*スマホでメッセージを送った*\n',
-                    spanish: '\n*envió un mensaje de texto*\n',
-                    french: '\n*a envoyé un SMS*\n',
-                    german: '\n*hat eine Nachricht gesendet*\n',
-                    chinese: '\n*发了一条短信*\n',
-                    korean: '\n*문자를 보냈다*\n',
-                };
-                const lang = (settings.messageLanguage || 'russian').toLowerCase();
-                const replacement = langReplace[lang] || langReplace.russian;
-                const cleanedMes = stripPhoneTags(text, replacement);
-                if (cleanedMes !== text) {
-                    msg.mes = cleanedMes;
-                    try {
-                        if (typeof c.saveChatDebounced === 'function') c.saveChatDebounced();
-                        else if (typeof c.saveChat === 'function') c.saveChat();
-                    } catch (e) { console.warn('[iMessage] saveChat after strip failed:', e); }
-                }
             }
 
             // 2) LLM-парсер (fallback если нет [PHONE] тегов)
@@ -1813,21 +1788,20 @@ export function syncToMainChat() {
         const langInject = (settings.messageLanguage || 'russian').toLowerCase();
         if (langInject === 'russian') {
             lines.push(`Когда ${contact.name} отправляет SMS/сообщение в мессенджере — оформи СТРОГО так:`);
-            lines.push(`[PHONE from="${contact.name}"]текст сообщения[/PHONE]`);
-            lines.push(`Несколько сообщений подряд — каждое на отдельной строке внутри тега.`);
-            lines.push(`Фото/селфи: [PHONE from="${contact.name}"][photo: описание на английском, 10-20 слов][/PHONE]`);
+            lines.push('[PHONE from="' + contact.name + '"]`текст сообщения`[/PHONE]');
+            lines.push(`Текст ВСЕГДА оборачивай в бэктики \`вот так\`. Несколько сообщений подряд — каждое на отдельной строке внутри тега, каждое в бэктиках.`);
+            lines.push('[PHONE from="' + contact.name + '"][photo: описание на английском, 10-20 слов][/PHONE]');
         } else {
             lines.push(`When ${contact.name} sends a text/iMessage/SMS, use this EXACT format:`);
-            lines.push(`[PHONE from="${contact.name}"]message text[/PHONE]`);
-            lines.push(`Multiple messages — each on its own line inside the tag.`);
-            lines.push(`Photos/selfies: [PHONE from="${contact.name}"][photo: english description, 10-20 words][/PHONE]`);
+            lines.push('[PHONE from="' + contact.name + '"]`message text`[/PHONE]');
+            lines.push('Text MUST ALWAYS be wrapped in backticks `like this`. Multiple messages — each on its own line inside the tag, each in backticks.');
+            lines.push('Photos/selfies: [PHONE from="' + contact.name + '"][photo: english description, 10-20 words][/PHONE]');
         }
-        lines.push(`The tag will be auto-parsed into the iMessage app and removed from the post.`);
         lines.push('');
-        lines.push(`⚠ Inside [PHONE] — ONLY real SMS text (what a person types with thumbs). NO narrative, NO third-person prose.`);
-        lines.push(`❌ WRONG: [PHONE from="${contact.name}"]She shared her traumatic story. We should respond sympathetically.[/PHONE]`);
-        lines.push(`✅ CORRECT: [PHONE from="${contact.name}"]damn that's heavy. I'm here[/PHONE]`);
-        lines.push(`✅ CORRECT: [PHONE from="${contact.name}"][photo: selfie in locker room, wet hair][/PHONE]`);
+        lines.push(`⚠ Inside [PHONE] — ONLY real SMS text (what a person types with thumbs). NO narrative, NO third-person prose. ALWAYS use backticks.`);
+        lines.push('❌ WRONG: [PHONE from="' + contact.name + '"]She shared her traumatic story.[/PHONE]');
+        lines.push('✅ CORRECT: [PHONE from="' + contact.name + '"]`damn that\'s heavy. I\'m here`[/PHONE]');
+        lines.push('✅ CORRECT: [PHONE from="' + contact.name + '"][photo: selfie in locker room, wet hair][/PHONE]');
         }
         lines.push('');
 
@@ -1858,7 +1832,7 @@ export function syncToMainChat() {
     const otherConvs = activeConvs.filter(c => c.id !== mainBotContactId).slice(0, 6);
     if (otherConvs.length) {
         lines.push(`## Other active iMessage threads (${userLabel} is texting these NPCs in parallel):`);
-        lines.push(`These are NPCs — NOT the main-chat character. You don't play them directly in the main reply, but you know these threads exist and may let them influence the plot.${settings.phoneTagInject !== false ? ' An NPC can send a message using: [PHONE from="NpcName"]message[/PHONE] — SMS format only (short, first-person, no prose).' : ''}`);
+        lines.push(`These are NPCs — NOT the main-chat character. You don't play them directly in the main reply, but you know these threads exist and may let them influence the plot.${settings.phoneTagInject !== false ? ' An NPC can send a message using: [PHONE from="NpcName"]`message`[/PHONE] — SMS format only (short, first-person, no prose, always backticks).' : ''}`);
         lines.push('');
 
         const othersN = settings.injectOthersLastN || 5;
