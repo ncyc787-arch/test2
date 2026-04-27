@@ -332,17 +332,25 @@ function parseQuoteAt(text, startIdx) {
 // Формат: [PHONE from="Имя"]текст[/PHONE]
 // ══════════════════════════════════════════════════════════
 
-const PHONE_TAG_RE = /\[PHONE\s+from=["']([^"']+)["']\]([\s\S]*?)\[\/PHONE\]/gi;
+const PHONE_TAG_RE = /\[PHONE\s+from=["']([^"']+)["'](?:\s+to=["']([^"']+)["'])?\]([\s\S]*?)\[\/PHONE\]/gi;
 
-function extractPhoneTags(rpText) {
+function extractPhoneTags(rpText, userName) {
     if (!rpText || typeof rpText !== 'string') return [];
     const results = [];
     let m;
+    const userLow = (userName || '').toLowerCase();
     const re = new RegExp(PHONE_TAG_RE.source, PHONE_TAG_RE.flags);
     while ((m = re.exec(rpText)) !== null) {
         const contactName = m[1].trim();
-        const body = m[2].trim();
+        const toName = (m[2] || '').trim();
+        const body = m[3].trim();
         if (!contactName || !body) continue;
+
+        // Фильтр адресата: если указан to и он НЕ юзер — пропускаем
+        if (toName && userLow && toName.toLowerCase() !== userLow) {
+            console.log(`[iMessage] [PHONE] пропуск: от ${contactName} для ${toName} (не юзер)`);
+            continue;
+        }
 
         const items = [];
         // Разбиваем по двойным переносам на отдельные сообщения
@@ -1237,16 +1245,27 @@ export async function syncFromMainChat() {
         for (let i = lastIdx + 1; i < chat.length; i++) {
             const msg = chat[i];
             if (!msg || msg.is_user || msg.is_system) continue;
-            const text = String(msg.mes || '');
+            const rawMes = String(msg.mes || '');
+            // ST хранит HTML — стрипаем теги и декодируем HTML-сущности для парсинга
+            const text = rawMes
+                .replace(/<br\s*\/?>/gi, '\n')
+                .replace(/<[^>]+>/g, '')
+                .replace(/&quot;/g, '"')
+                .replace(/&amp;/g, '&')
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&#39;/g, "'")
+                .replace(/&apos;/g, "'");
 
             // Выбор парсера: [PHONE] теги (приоритет) → LLM → regex (fallback)
             let extracted = [];
             let usedParser = '';
             const botName = msg.name || c.name2 || '';
-            const prevText = i > 0 ? String(chat[i - 1]?.mes || '').slice(-500) : '';
+            const prevText = i > 0 ? String(chat[i - 1]?.mes || '').replace(/<[^>]+>/g, '').slice(-500) : '';
 
             // 1) [PHONE] теги — приоритет
-            extracted = extractPhoneTags(text);
+            const userName = c.name1 || '';
+            extracted = extractPhoneTags(text, userName);
             if (extracted.length) {
                 usedParser = 'phone-tag';
                 console.log(`[iMessage] [PHONE]-парсер: ${extracted.length} групп сообщений`);
@@ -1766,21 +1785,23 @@ export function syncToMainChat() {
         if (langInject === 'russian') {
             lines.push(`## Формат SMS в RP`);
             lines.push(`Когда ЛЮБОЙ персонаж отправляет SMS/сообщение в мессенджере — оформи СТРОГО так:`);
-            lines.push('[PHONE from="Имя"]`текст сообщения`[/PHONE]');
+            lines.push(`[PHONE from="Имя отправителя" to="${userLabel}"]` + '`текст сообщения`[/PHONE]');
             lines.push(`Текст ВСЕГДА оборачивай в бэктики \`вот так\`. Несколько сообщений подряд — каждое на отдельной строке внутри тега, каждое в бэктиках.`);
-            lines.push('Фото/селфи: [PHONE from="Имя"][photo: описание на английском, 10-20 слов][/PHONE]');
+            lines.push(`Если сообщение адресовано НЕ ${userLabel}, а другому персонажу — укажи to="Имя получателя".`);
+            lines.push(`Фото/селфи: [PHONE from="Имя" to="${userLabel}"][photo: описание на английском, 10-20 слов][/PHONE]`);
         } else {
             lines.push(`## SMS format in RP`);
             lines.push(`When ANY character sends a text/iMessage/SMS, use this EXACT format:`);
-            lines.push('[PHONE from="Name"]`message text`[/PHONE]');
+            lines.push(`[PHONE from="SenderName" to="${userLabel}"]` + '`message text`[/PHONE]');
             lines.push('Text MUST ALWAYS be wrapped in backticks `like this`. Multiple messages — each on its own line inside the tag, each in backticks.');
-            lines.push('Photos/selfies: [PHONE from="Name"][photo: english description, 10-20 words][/PHONE]');
+            lines.push(`If the message is NOT for ${userLabel} but for another character, set to="RecipientName".`);
+            lines.push(`Photos/selfies: [PHONE from="Name" to="${userLabel}"][photo: english description, 10-20 words][/PHONE]`);
         }
         lines.push('');
         lines.push(`⚠ Inside [PHONE] — ONLY real SMS text (what a person types with thumbs). NO narrative, NO third-person prose. ALWAYS use backticks.`);
-        lines.push('❌ WRONG: [PHONE from="Name"]She shared her traumatic story.[/PHONE]');
-        lines.push('✅ CORRECT: [PHONE from="Name"]`damn that\'s heavy. I\'m here`[/PHONE]');
-        lines.push('✅ CORRECT: [PHONE from="Name"][photo: selfie in locker room, wet hair][/PHONE]');
+        lines.push(`❌ WRONG: [PHONE from="Name" to="${userLabel}"]She shared her traumatic story.[/PHONE]`);
+        lines.push(`✅ CORRECT: [PHONE from="Name" to="${userLabel}"]` + '`damn that\'s heavy. I\'m here`[/PHONE]');
+        lines.push(`✅ CORRECT: [PHONE from="Name" to="${userLabel}"][photo: selfie in locker room, wet hair][/PHONE]`);
         lines.push('');
     }
 
@@ -1830,7 +1851,7 @@ export function syncToMainChat() {
     const otherConvs = activeConvs.filter(c => c.id !== mainBotContactId).slice(0, 6);
     if (otherConvs.length) {
         lines.push(`## Other active iMessage threads (${userLabel} is texting these NPCs in parallel):`);
-        lines.push(`These are NPCs — NOT the main-chat character. You don't play them directly in the main reply, but you know these threads exist and may let them influence the plot.${settings.phoneTagInject !== false ? ' An NPC can send a message using: [PHONE from="NpcName"]`message`[/PHONE] — SMS format only (short, first-person, no prose, always backticks).' : ''}`);
+        lines.push(`These are NPCs — NOT the main-chat character. You don't play them directly in the main reply, but you know these threads exist and may let them influence the plot.${settings.phoneTagInject !== false ? ` An NPC can send a message using: [PHONE from="NpcName" to="${userLabel}"]\`message\`[/PHONE] — SMS format only (short, first-person, no prose, always backticks).` : ''}`);
         lines.push('');
 
         const othersN = settings.injectOthersLastN || 5;
