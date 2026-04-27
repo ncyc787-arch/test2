@@ -1072,9 +1072,21 @@ select.im-set-input option {
         border: none !important;
     }
 
-    /* Header — more compact on mobile */
-    .im-header { padding: 10px 12px 8px; }
-    .im-header-main { padding-top: 12px; }
+    /* Header — safe area for notched iPhones + extra tap room */
+    .im-header {
+        padding: 10px 12px 8px;
+        padding-top: max(14px, calc(10px + env(safe-area-inset-top, 0px)));
+        min-height: 52px;
+    }
+    .im-header-main {
+        padding-top: max(16px, calc(12px + env(safe-area-inset-top, 0px)));
+    }
+    .im-header-btn {
+        width: 40px;
+        height: 40px;
+        min-width: 40px;
+        min-height: 40px;
+    }
 
     /* Scrollable views — ensure they actually scroll on iOS */
     .im-app-body.im-body-scrollable {
@@ -1178,8 +1190,14 @@ select.im-set-input option {
 }
 
 /* Safe area insets for notched phones */
-@supports (padding-bottom: env(safe-area-inset-bottom)) {
+@supports (padding: env(safe-area-inset-top)) {
     @media (max-width: 500px) {
+        .im-header {
+            padding-top: calc(10px + env(safe-area-inset-top));
+        }
+        .im-header-main {
+            padding-top: calc(12px + env(safe-area-inset-top));
+        }
         .im-settings {
             padding-bottom: calc(32px + env(safe-area-inset-bottom));
         }
