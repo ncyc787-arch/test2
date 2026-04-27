@@ -332,15 +332,22 @@ function parseQuoteAt(text, startIdx) {
 // Формат: [PHONE from="Имя"]текст[/PHONE]
 // ══════════════════════════════════════════════════════════
 
+// Основной regex: с закрывающим тегом
 const PHONE_TAG_RE = /\[PHONE\s+from=["']([^"']+)["'](?:\s+to=["']([^"']+)["'])?\]([\s\S]*?)\[\/PHONE\]/gi;
+// Fallback: без закрывающего тега — ловим до конца строки или до начала нового предложения с большой буквы
+const PHONE_TAG_NOCLOSE_RE = /\[PHONE\s+from=["']([^"']+)["'](?:\s+to=["']([^"']+)["'])?\]([^\n]*)/gi;
 
 function extractPhoneTags(rpText, userName) {
     if (!rpText || typeof rpText !== 'string') return [];
     const results = [];
     let m;
     const userLow = (userName || '').toLowerCase();
-    const re = new RegExp(PHONE_TAG_RE.source, PHONE_TAG_RE.flags);
+
+    // Сначала пробуем основной regex (с [/PHONE])
+    let re = new RegExp(PHONE_TAG_RE.source, PHONE_TAG_RE.flags);
+    let found = false;
     while ((m = re.exec(rpText)) !== null) {
+        found = true;
         const contactName = m[1].trim();
         const toName = (m[2] || '').trim();
         const body = m[3].trim();
@@ -387,6 +394,39 @@ function extractPhoneTags(rpText, userName) {
             results.push({ contactName, items, _explicit: true });
         }
     }
+
+    // Fallback: бот не закрыл [/PHONE] — ловим до конца строки
+    if (!found) {
+        re = new RegExp(PHONE_TAG_NOCLOSE_RE.source, PHONE_TAG_NOCLOSE_RE.flags);
+        while ((m = re.exec(rpText)) !== null) {
+            const contactName = m[1].trim();
+            const toName = (m[2] || '').trim();
+            const body = m[3].trim();
+            if (!contactName || !body) continue;
+
+            if (toName && userLow && toName.toLowerCase() !== userLow) {
+                console.log(`[iMessage] [PHONE] пропуск (no-close): от ${contactName} для ${toName}`);
+                continue;
+            }
+
+            const items = [];
+            const photoRe2 = /\[photo:\s*([^\]]+)\]/gi;
+            const photoMatches = [...body.matchAll(photoRe2)];
+            for (const pm of photoMatches) {
+                const prompt = pm[1].trim();
+                if (prompt.length >= 3) items.push({ type: 'photo', prompt });
+            }
+            const cleanText = body.replace(/\[photo:\s*[^\]]+\]/gi, '').replace(/^`+|`+$/g, '').trim();
+            if (cleanText.length >= 2) {
+                items.push({ type: 'text', text: cleanText });
+            }
+            if (items.length) {
+                console.warn(`[iMessage] [PHONE] fallback (без [/PHONE]): ${contactName}`);
+                results.push({ contactName, items, _explicit: true });
+            }
+        }
+    }
+
     return results;
 }
 
@@ -1798,7 +1838,7 @@ export function syncToMainChat() {
             lines.push(`Photos/selfies: [PHONE from="Name" to="${userLabel}"][photo: english description, 10-20 words][/PHONE]`);
         }
         lines.push('');
-        lines.push(`⚠ Inside [PHONE] — ONLY real SMS text (what a person types with thumbs). NO narrative, NO third-person prose. ALWAYS use backticks.`);
+        lines.push(`⚠ ALWAYS close with [/PHONE]. Inside [PHONE]...[/PHONE] — ONLY real SMS text (what a person types with thumbs). NO narrative, NO third-person prose. ALWAYS use backticks.`);
         lines.push(`❌ WRONG: [PHONE from="Name" to="${userLabel}"]She shared her traumatic story.[/PHONE]`);
         lines.push(`✅ CORRECT: [PHONE from="Name" to="${userLabel}"]` + '`damn that\'s heavy. I\'m here`[/PHONE]');
         lines.push(`✅ CORRECT: [PHONE from="Name" to="${userLabel}"][photo: selfie in locker room, wet hair][/PHONE]`);
