@@ -632,7 +632,7 @@ function viewSettings() {
             <input type="checkbox" data-im-set="phoneTagInject" ${settings.phoneTagInject !== false ? 'checked' : ''}>
             <span>Подсказывать боту формат SMS (рекомендуется)</span>
         </label>
-        <div class="im-set-hint">Бот будет использовать [PHONE] теги для SMS-сообщений в RP. После парсинга теги автоматически удаляются из поста и заменяются коротким описанием.</div>
+        <div class="im-set-hint">Бот будет оформлять SMS в RP через [PHONE] теги. Если включено — старые парсеры (regex/LLM) отключаются, ложные срабатывания исключены. Добавь regex-скрипт в ST чтобы теги не отображались в посте.</div>
 
         <label class="im-set-field row">
             <input type="checkbox" data-im-set="useLLMParser" ${settings.useLLMParser !== false ? 'checked' : ''}>

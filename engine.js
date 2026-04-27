@@ -1252,26 +1252,30 @@ export async function syncFromMainChat() {
                 console.log(`[iMessage] [PHONE]-парсер: ${extracted.length} групп сообщений`);
             }
 
-            // 2) LLM-парсер (fallback если нет [PHONE] тегов)
-            if (!extracted.length && settings.useLLMParser !== false && isExtraLLMConfigured() && rpTextWorthAnalyzing(text)) {
-                const llmResult = await extractViaLLM(text, botName, prevText);
-                if (llmResult !== null) {
-                    extracted = llmResult;
-                    usedParser = 'llm';
-                    if (extracted.length) console.log(`[iMessage] LLM-парсер: ${extracted.length} групп сообщений`);
-                } else {
-                    // LLM упал — fallback на regex
-                    extracted = extractVirtualMessagesFromText(text);
-                    usedParser = 'regex-fallback';
-                    if (extracted.length) console.log(`[iMessage] regex-fallback: ${extracted.length} групп`);
+            // 2) LLM/regex fallback — только если phoneTagInject ВЫКЛЮЧЕН
+            // Если phoneTagInject включён и бот не написал [PHONE] — значит SMS нет, не гадаем.
+            if (!extracted.length && settings.phoneTagInject === false) {
+                // LLM-парсер
+                if (settings.useLLMParser !== false && isExtraLLMConfigured() && rpTextWorthAnalyzing(text)) {
+                    const llmResult = await extractViaLLM(text, botName, prevText);
+                    if (llmResult !== null) {
+                        extracted = llmResult;
+                        usedParser = 'llm';
+                        if (extracted.length) console.log(`[iMessage] LLM-парсер: ${extracted.length} групп сообщений`);
+                    } else {
+                        // LLM упал — fallback на regex
+                        extracted = extractVirtualMessagesFromText(text);
+                        usedParser = 'regex-fallback';
+                        if (extracted.length) console.log(`[iMessage] regex-fallback: ${extracted.length} групп`);
+                    }
                 }
-            }
 
-            // 3) Regex (fallback если нет ни [PHONE] ни LLM)
-            if (!extracted.length && !usedParser) {
-                extracted = extractVirtualMessagesFromText(text);
-                usedParser = 'regex';
-                if (extracted.length) console.log(`[iMessage] regex-парсер: ${extracted.length} групп`);
+                // Regex (fallback если нет ни [PHONE] ни LLM)
+                if (!extracted.length && !usedParser) {
+                    extracted = extractVirtualMessagesFromText(text);
+                    usedParser = 'regex';
+                    if (extracted.length) console.log(`[iMessage] regex-парсер: ${extracted.length} групп`);
+                }
             }
             for (const rec of extracted) {
                 // Ищем существующего ИЛИ создаём нового контакта автоматом
