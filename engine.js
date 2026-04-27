@@ -1727,20 +1727,10 @@ export function syncToMainChat() {
     const ROSTER = getRoster();
     const s = loadState();
 
-    // Имя основного бота из ST
-    let mainBotName = '';
-    try {
-        const c = (typeof SillyTavern?.getContext === 'function') ? SillyTavern.getContext() : {};
-        mainBotName = c.name2 || '';
-    } catch {}
-
-    // Находим ID контакта, совпадающего с основным ботом (если такой есть)
+    // Находим ID контакта-автобота (с флагом _isMainBot из roster)
     let mainBotContactId = null;
-    if (mainBotName) {
-        const low = mainBotName.toLowerCase();
-        for (const [id, contact] of Object.entries(ROSTER)) {
-            if ((contact.name || '').toLowerCase() === low) { mainBotContactId = id; break; }
-        }
+    for (const [id, contact] of Object.entries(ROSTER)) {
+        if (contact._isMainBot) { mainBotContactId = id; break; }
     }
 
     // Все активные переписки (с сообщениями)
@@ -1770,6 +1760,30 @@ export function syncToMainChat() {
     lines.push(`The user (${userLabel}) has an iMessage app where they exchange text messages with characters from the lorebook. You are running the whole roleplay and need to be aware of these parallel text-message threads even when the main chat focuses on other scenes.`);
     lines.push('');
 
+    // ── Общая инструкция [PHONE] формата (всегда, если включена) ──
+    if (settings.phoneTagInject !== false) {
+        const langInject = (settings.messageLanguage || 'russian').toLowerCase();
+        if (langInject === 'russian') {
+            lines.push(`## Формат SMS в RP`);
+            lines.push(`Когда ЛЮБОЙ персонаж отправляет SMS/сообщение в мессенджере — оформи СТРОГО так:`);
+            lines.push('[PHONE from="Имя"]`текст сообщения`[/PHONE]');
+            lines.push(`Текст ВСЕГДА оборачивай в бэктики \`вот так\`. Несколько сообщений подряд — каждое на отдельной строке внутри тега, каждое в бэктиках.`);
+            lines.push('Фото/селфи: [PHONE from="Имя"][photo: описание на английском, 10-20 слов][/PHONE]');
+        } else {
+            lines.push(`## SMS format in RP`);
+            lines.push(`When ANY character sends a text/iMessage/SMS, use this EXACT format:`);
+            lines.push('[PHONE from="Name"]`message text`[/PHONE]');
+            lines.push('Text MUST ALWAYS be wrapped in backticks `like this`. Multiple messages — each on its own line inside the tag, each in backticks.');
+            lines.push('Photos/selfies: [PHONE from="Name"][photo: english description, 10-20 words][/PHONE]');
+        }
+        lines.push('');
+        lines.push(`⚠ Inside [PHONE] — ONLY real SMS text (what a person types with thumbs). NO narrative, NO third-person prose. ALWAYS use backticks.`);
+        lines.push('❌ WRONG: [PHONE from="Name"]She shared her traumatic story.[/PHONE]');
+        lines.push('✅ CORRECT: [PHONE from="Name"]`damn that\'s heavy. I\'m here`[/PHONE]');
+        lines.push('✅ CORRECT: [PHONE from="Name"][photo: selfie in locker room, wet hair][/PHONE]');
+        lines.push('');
+    }
+
     // ── Основной бот — контакт из лорбука ──
     // Если основной бот одновременно переписывается с юзером в iMessage,
     // он ДОЛЖЕН знать эту переписку в полном объёме и поведение должно быть согласованным.
@@ -1787,26 +1801,6 @@ export function syncToMainChat() {
 
         lines.push(`## CRITICAL: ${contact.name} (the current main-chat character) is ALSO texting ${userLabel} in iMessage RIGHT NOW.`);
         lines.push(`${contact.name} in the main chat and ${contact.name} in iMessage are the SAME person — stay consistent: same memories, same feelings, same stated facts. If ${userLabel} references something from the texts, ${contact.name} remembers it.`);
-        lines.push('');
-        if (settings.phoneTagInject !== false) {
-        const langInject = (settings.messageLanguage || 'russian').toLowerCase();
-        if (langInject === 'russian') {
-            lines.push(`Когда ${contact.name} отправляет SMS/сообщение в мессенджере — оформи СТРОГО так:`);
-            lines.push('[PHONE from="' + contact.name + '"]`текст сообщения`[/PHONE]');
-            lines.push(`Текст ВСЕГДА оборачивай в бэктики \`вот так\`. Несколько сообщений подряд — каждое на отдельной строке внутри тега, каждое в бэктиках.`);
-            lines.push('[PHONE from="' + contact.name + '"][photo: описание на английском, 10-20 слов][/PHONE]');
-        } else {
-            lines.push(`When ${contact.name} sends a text/iMessage/SMS, use this EXACT format:`);
-            lines.push('[PHONE from="' + contact.name + '"]`message text`[/PHONE]');
-            lines.push('Text MUST ALWAYS be wrapped in backticks `like this`. Multiple messages — each on its own line inside the tag, each in backticks.');
-            lines.push('Photos/selfies: [PHONE from="' + contact.name + '"][photo: english description, 10-20 words][/PHONE]');
-        }
-        lines.push('');
-        lines.push(`⚠ Inside [PHONE] — ONLY real SMS text (what a person types with thumbs). NO narrative, NO third-person prose. ALWAYS use backticks.`);
-        lines.push('❌ WRONG: [PHONE from="' + contact.name + '"]She shared her traumatic story.[/PHONE]');
-        lines.push('✅ CORRECT: [PHONE from="' + contact.name + '"]`damn that\'s heavy. I\'m here`[/PHONE]');
-        lines.push('✅ CORRECT: [PHONE from="' + contact.name + '"][photo: selfie in locker room, wet hair][/PHONE]');
-        }
         lines.push('');
 
         if (summary && olderCount > 0) {

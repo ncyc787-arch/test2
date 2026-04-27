@@ -467,16 +467,25 @@ function viewSettings() {
         <label class="im-set-field">
             <span>Имя лорбука</span>
             ${(() => {
-                const wn = (typeof world_names !== 'undefined' && Array.isArray(world_names) && world_names.length)
-                    ? world_names
-                    : null;
+                // Берём список лорбуков: сначала из world_names, потом из DOM ST как fallback
+                let wn = null;
+                if (typeof world_names !== 'undefined' && Array.isArray(world_names) && world_names.length) {
+                    wn = world_names;
+                } else {
+                    try {
+                        const opts = document.querySelectorAll('#world_info option, #world_editor_select option');
+                        const fromDom = [];
+                        opts.forEach(o => { if (o.value && o.value !== '') fromDom.push(o.value); });
+                        if (fromDom.length) wn = [...new Set(fromDom)];
+                    } catch {}
+                }
                 if (wn) {
                     return `<select class="im-set-input" data-im-set="lorebookName">
                         <option value="">— выбери лорбук —</option>
                         ${wn.map(n => `<option value="${esc(n)}" ${n === settings.lorebookName ? 'selected' : ''}>${esc(n)}</option>`).join('')}
                     </select>`;
                 }
-                return `<input type="text" class="im-set-input" data-im-set="lorebookName" value="${esc(settings.lorebookName)}">`;
+                return `<input type="text" class="im-set-input" data-im-set="lorebookName" value="${esc(settings.lorebookName)}" placeholder="Введи имя лорбука">`;
             })()}
         </label>` : ''}
         ${settings.rosterSource === 'character-cards' ? `

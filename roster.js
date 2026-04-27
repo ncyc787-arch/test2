@@ -153,12 +153,70 @@ function heuristicMeta(rawContact) {
     };
 }
 
+// ── Создаёт контакт из активного RP-бота (context.name2) ──
+function activeCharToContact() {
+    try {
+        const ctx = (typeof SillyTavern?.getContext === 'function') ? SillyTavern.getContext() : {};
+        const charId = ctx.characterId;
+        const chars = ctx.characters;
+        if (charId == null || !chars || !chars[charId]) return null;
+        const char = chars[charId];
+        const name = (char.name || '').trim();
+        if (!name) return null;
+        const descParts = [char.description || ''];
+        if (char.personality) descParts.push('Personality: ' + char.personality);
+        if (char.scenario) descParts.push('Scenario: ' + char.scenario);
+        const content = descParts.filter(Boolean).join('\n').trim();
+        const slug = name.toLowerCase().replace(/[^a-zа-я0-9]/gi, '').slice(0, 12);
+        const id = `main_${slug}`;
+        return {
+            id, name,
+            rawDescription: content,
+            rawKeys: [name],
+            rawComment: name,
+            _gradient: gradientFor(id),
+            _initial: (name[0] || '?').toUpperCase(),
+            _isMainBot: true,
+        };
+    } catch { return null; }
+}
+
 // ── Главный загрузчик ──
 export async function reloadRoster() {
     const settings = getSettings();
     const newRoster = {};
     const newOrder = [];
     const newAllDescs = {};
+
+    // ── Автоконтакт: активный RP-бот — всегда первый ──
+    const mainChar = activeCharToContact();
+    if (mainChar) {
+        newAllDescs[mainChar.id] = { name: mainChar.name, description: mainChar.rawDescription };
+        let meta = getCachedContactMeta('_main', mainChar.id, mainChar.rawDescription) || getContactMeta(mainChar.id);
+        let needsParse = false;
+        if (!meta) {
+            meta = heuristicMeta(mainChar);
+            needsParse = true;
+        }
+        const perChatMeta = getContactMeta(mainChar.id) || {};
+        newRoster[mainChar.id] = {
+            ...meta,
+            name: mainChar.name,
+            _gradient: mainChar._gradient,
+            _initial: mainChar._initial,
+            _rawDescription: mainChar.rawDescription,
+            _rawKeys: mainChar.rawKeys,
+            _lorebookName: '_main',
+            _needsLLMParse: needsParse,
+            _isMainBot: true,
+            ...(perChatMeta._descOverride ? { _descOverride: perChatMeta._descOverride } : {}),
+            ...(perChatMeta.styleNote ? { styleNote: perChatMeta.styleNote } : {}),
+            ...(perChatMeta._noReply != null ? { _noReply: perChatMeta._noReply } : {}),
+            ...(perChatMeta.stickerFrequency ? { stickerFrequency: perChatMeta.stickerFrequency } : {}),
+        };
+        newOrder.push(mainChar.id);
+        console.log(`[iMessage] Автоконтакт: ${mainChar.name} (${mainChar.id})`);
+    }
 
     // ── Ветка: карточки персонажей ──
     if (settings.rosterSource === 'character-cards') {
@@ -175,8 +233,11 @@ export async function reloadRoster() {
 
         console.log(`[iMessage] Карточки персонажей: ${filtered.length} из ${characters.length}`);
 
+        const mainName = mainChar?.name?.toLowerCase();
         for (let i = 0; i < filtered.length; i++) {
             const raw = charToContact(filtered[i], i);
+            // Пропуск дубликата активного бота
+            if (mainName && raw.name.toLowerCase() === mainName) continue;
             newAllDescs[raw.id] = { name: raw.name, description: raw.rawDescription };
 
             let meta = getCachedContactMeta('_chars', raw.id, raw.rawDescription) || getContactMeta(raw.id);
@@ -228,8 +289,11 @@ export async function reloadRoster() {
     const entries = Object.values(data.entries).filter(e => !e.disable);
     console.log(`[iMessage] Лорбук "${lbName}": ${entries.length} записей`);
 
+    const mainName = mainChar?.name?.toLowerCase();
     for (let i = 0; i < entries.length; i++) {
         const raw = entryToContact(entries[i], i);
+        // Пропуск дубликата активного бота
+        if (mainName && raw.name.toLowerCase() === mainName) continue;
 
         newAllDescs[raw.id] = { name: raw.name, description: raw.rawDescription };
 
