@@ -290,10 +290,13 @@ export async function reloadRoster() {
     console.log(`[iMessage] Лорбук "${lbName}": ${entries.length} записей`);
 
     const mainName = mainChar?.name?.toLowerCase();
+    const mainFirst = mainName ? mainName.split(/\s+/)[0] : '';
     for (let i = 0; i < entries.length; i++) {
         const raw = entryToContact(entries[i], i);
-        // Пропуск дубликата активного бота
-        if (mainName && raw.name.toLowerCase() === mainName) continue;
+        // Пропуск дубликата активного бота (по полному имени или первому слову)
+        const rawLow = raw.name.toLowerCase();
+        const rawFirst = rawLow.split(/\s+/)[0];
+        if (mainName && (rawLow === mainName || rawFirst === mainFirst)) continue;
 
         newAllDescs[raw.id] = { name: raw.name, description: raw.rawDescription };
 
@@ -442,10 +445,13 @@ export async function regenerateContactMeta(contactId) {
 // АВТО-СОЗДАНИЕ КОНТАКТА при первом упоминании в RP
 // ══════════════════════════════════════════════════════════
 
-// Нормализует имя для сравнения: нижний регистр + убирает склонения.
-// «Аякса», «Аяксу», «Аяксом» → «аякс» (если ближе к какому-то известному).
+// Нормализует имя для сравнения: нижний регистр + убирает эмодзи/спецсимволы.
 function normalizeNameForLookup(name) {
-    return String(name || '').trim().toLowerCase();
+    return String(name || '').trim().toLowerCase()
+        .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}]/gu, '')
+        .replace(/[^\p{L}\p{N}\s]/gu, '')
+        .replace(/\s+/g, ' ')
+        .trim();
 }
 
 // Ищет contactId по имени (с учётом склонений). Возвращает id или null.

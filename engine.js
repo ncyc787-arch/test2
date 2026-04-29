@@ -1339,6 +1339,7 @@ export async function syncFromMainChat() {
             for (const rec of extracted) {
                 // Ищем существующего ИЛИ создаём нового контакта автоматом
                 let contactId = findContactIdByName(rec.contactName);
+                console.log(`[iMessage] findContactIdByName("${rec.contactName}") → ${contactId || 'NOT FOUND'}`, 'roster keys:', Object.keys(getRoster()));
                 if (!contactId) {
                     // Только для явных сообщений (rec._explicit) создаём контакт.
                     // Для orphan-режима (где имя угадано по контексту) — только существующие.
@@ -1843,6 +1844,13 @@ export function syncToMainChat() {
         lines.push(`✅ CORRECT: [PHONE from="Name" to="${userLabel}"]` + '`damn that\'s heavy. I\'m here`[/PHONE]');
         lines.push(`✅ CORRECT: [PHONE from="Name" to="${userLabel}"][photo: selfie in locker room, wet hair][/PHONE]`);
         lines.push('');
+
+        // Список контактов — чтобы бот использовал точные имена в from=""
+        const contactNames = Object.values(ROSTER).map(c => c.name).filter(Boolean);
+        if (contactNames.length) {
+            lines.push(`Known contacts in ${userLabel}'s phone: ${contactNames.join(', ')}. Use EXACTLY these names in from="".`);
+            lines.push('');
+        }
     }
 
     // ── Основной бот — контакт из лорбука ──
