@@ -11,6 +11,40 @@ import { stickerCatalogForPrompt, findStickerById } from './stickers.js';
 const PROMPT_KEY = 'IMESSAGE_EXT';
 
 // ══════════════════════════════════════════════════════════
+// ЛОГ-БУФЕР (для кнопки «Копировать логи»)
+// ══════════════════════════════════════════════════════════
+const _logBuffer = [];
+const _LOG_MAX = 300; // хранить последние 300 записей
+
+function _pushLog(level, args) {
+    const ts = new Date().toISOString().slice(11, 23); // HH:mm:ss.SSS
+    const text = args.map(a => typeof a === 'string' ? a : JSON.stringify(a, null, 0)?.slice(0, 500) ?? String(a)).join(' ');
+    _logBuffer.push(`[${ts}] ${level}: ${text}`);
+    if (_logBuffer.length > _LOG_MAX) _logBuffer.shift();
+}
+
+// Перехватываем ТОЛЬКО сообщения с [iMessage] в них
+const _origLog = console.log.bind(console);
+const _origWarn = console.warn.bind(console);
+const _origError = console.error.bind(console);
+
+const _imFilter = (args) => args.some(a => typeof a === 'string' && a.includes('[iMessage]'));
+
+const _hookedLog = (...args) => { if (_imFilter(args)) _pushLog('LOG', args); _origLog(...args); };
+const _hookedWarn = (...args) => { if (_imFilter(args)) _pushLog('WARN', args); _origWarn(...args); };
+const _hookedError = (...args) => { if (_imFilter(args)) _pushLog('ERR', args); _origError(...args); };
+
+console.log = _hookedLog;
+console.warn = _hookedWarn;
+console.error = _hookedError;
+
+/** Возвращает строку с последними логами расширения */
+export function getImessageLogs() {
+    if (!_logBuffer.length) return '(нет логов — перезагрузи страницу и воспроизведи проблему)';
+    return _logBuffer.join('\n');
+}
+
+// ══════════════════════════════════════════════════════════
 // УТИЛИТЫ
 // ══════════════════════════════════════════════════════════
 
@@ -192,56 +226,73 @@ function buildRelationshipContext(activeContactId, maxOtherChars = 2000) {
 // Возвращает причину отказа (строку) или null если ок.
 // ВАЖНО: для русских слов нельзя использовать \b — в JS RegExp \b работает только
 // для ASCII. Используем явные границы: (?:^|[^а-яёa-z]) и (?=[^а-яёa-z]|$).
+//
+// Фильтр RP-прозы: определяет, является ли текст нарративом, а не SMS.
+// ПРАВИЛО: текст либо пропускается ЦЕЛИКОМ, либо отбрасывается ЦЕЛИКОМ.
+// Никогда не обрезаем — не трогаем содержимое.
+// Короткие тексты (< 200 символов) всегда пропускаем — SMS обычно короткие.
+// Только для длинных текстов проверяем: это RP-проза или настоящее сообщение?
 function detectRpParagraph(text) {
-    if (!text) return 'empty';
-    const t = String(text).trim();
-    const lower = t.toLowerCase();
+    if (!text || typeof text !== 'string') return null;
+    const t = text.trim();
 
-    // 1) Слишком длинное — SMS не бывают по 600+ символов сплошняком
-    if (t.length > 600) return `too_long(${t.length})`;
+    // Короткие сообщения — всегда пропускаем, SMS обычно короткие
+    if (t.length < 200) return null;
 
-    // 2) Инструкции-директивы (assistant-style из RP-бота)
-    const directivePatterns = [
-        /^(?:respond|reply|answer|write|send|message)\s+(?:to|as|her|him|them|back)/i,
-        /^(?:please|давай|напиши|ответь|отправь)\s+(?:respond|reply|answer|ей|ему)/i,
-        /\bwe\s+(?:should|must|need\s+to)\b/i,
-        /(?:^|[^а-яёa-z])(?:мы|нам)\s+(?:должн[ыа]|нужно|следует)\s+(?:ответить|написать|отправить)/i,
-        /^(?:user|пользовател|юзер)\s+(?:asks?|wants?|просит|хочет)/i,
-        /\b(?:let'?s|let\s+us)\s+(?:respond|reply|answer)\b/i,
-        /(?:^|[^а-яёa-z])давай(?:те)?\s+(?:ответим|напишем)/i,
-    ];
-    for (const re of directivePatterns) {
-        if (re.test(t)) return 'directive';
+    // Подсчитываем маркеры RP-прозы
+    let rpScore = 0;
+
+    // 1. Третье лицо: «он/она/они сделал(а)» — типичный нарратив
+    const thirdPersonRu = /(?:^|[^а-яёa-z])(он|она|они|его|её|их|ему|ей|им)\s+(сказал|подумал|посмотрел|вздохнул|улыбнул|нахмурил|кивнул|покачал|повернул|вошёл|вышел|вышла|встал|сел[аи]?|ответил|прошептал|произнёс|заметил|увидел|почувствовал|взглянул|отвернул|шагнул|направил|протянул|поднял|опустил|прижал|обнял|поцеловал|засмеял|рассмеял|хмыкнул|фыркнул|буркнул|промолчал|задумал|решил|понял|осознал|вспомнил|забы[лв]|знал|хотел|мог[ла]?|должен|стоял|сидел|лежал|стоял[аи]?|бежал|шёл|шла)/gi;
+    const thirdPersonEn = /(?:^|[^a-z])(he|she|they|his|her|their|him)\s+(said|thought|looked|sighed|smiled|frowned|nodded|shook|turned|entered|left|stood|sat|replied|whispered|murmured|noticed|saw|felt|glanced|stepped|reached|raised|lowered|pressed|hugged|kissed|laughed|chuckled|snorted|muttered|remained|decided|realized|remembered|forgot|knew|wanted|could|should|was\s+standing|was\s+sitting|was\s+lying|walked|ran)/gi;
+    const ruMatches = (t.match(thirdPersonRu) || []).length;
+    const enMatches = (t.match(thirdPersonEn) || []).length;
+    rpScore += Math.min(ruMatches + enMatches, 6); // макс +6
+
+    // 2. Звёздочки *действие* — RP-разметка действий
+    const actionMarkers = (t.match(/\*[^*]{3,60}\*/g) || []).length;
+    rpScore += Math.min(actionMarkers, 3); // макс +3
+
+    // 3. Длинные предложения с описанием обстановки
+    const sentences = t.split(/[.!?…]+/).filter(s => s.trim().length > 10);
+    const longDescSentences = sentences.filter(s => s.trim().length > 120).length;
+    rpScore += Math.min(longDescSentences, 3); // макс +3
+
+    // 4. Абзацная структура — несколько абзацев текста (SMS обычно нет абзацев)
+    const paragraphs = t.split(/\n\n+/).filter(p => p.trim().length > 30);
+    if (paragraphs.length >= 3) rpScore += 2;
+
+    // 5. Описательные конструкции типа «его глаза», «её голос», «the room was»
+    const descriptive = /(?:его\s+(?:глаза|лицо|голос|руки|взгляд|тело)|её\s+(?:глаза|лицо|голос|руки|взгляд|тело)|(?:the|a)\s+(?:room|air|silence|darkness|light|sound|voice|eyes|face)\s+(?:was|were|felt|seemed|grew|filled))/gi;
+    const descMatches = (t.match(descriptive) || []).length;
+    rpScore += Math.min(descMatches, 3); // макс +3
+
+    // Анти-маркеры: признаки что это SMS а не RP
+    let smsScore = 0;
+
+    // Сленг, аббревиатуры, эмодзи — типично для SMS
+    const smsMarkers = /(?:лол|хах|ахах|кек|бля|нах|ок[ей]?|пон|спс|ладн[оа]|ща|щас|норм|lol|lmao|omg|brb|btw|nvm|idk|tbh|rn|fr|😂|😭|😊|🥺|💀|❤|🤣|👀|🔥|😏|🤔|💕|😘|🙄|😈|🤡|💔|🥰|😅|🤷|👋|✌|🙃)/gi;
+    smsScore += Math.min((t.match(smsMarkers) || []).length, 4);
+
+    // Вопросительные предложения — SMS часто вопрос
+    const questions = (t.match(/\?/g) || []).length;
+    if (questions >= 2) smsScore += 2;
+
+    // Короткие строки (переносы) — SMS-стиль
+    const lines = t.split('\n').filter(l => l.trim().length > 0);
+    const shortLines = lines.filter(l => l.trim().length < 60).length;
+    if (shortLines > lines.length * 0.7) smsScore += 2;
+
+    // Прямое обращение на «ты/вы» — SMS направлено собеседнику
+    const directAddress = /(?:^|[^а-яёa-z])(ты|тебе|тебя|тобой|вы|вас|вам|you|your|you're|u )/gi;
+    const directCount = (t.match(directAddress) || []).length;
+    if (directCount >= 3) smsScore += 2;
+
+    // Финальное решение: RP только если rpScore значительно больше smsScore
+    // Порог высокий — лучше пропустить RP чем обрезать SMS
+    if (rpScore >= 5 && rpScore > smsScore * 2) {
+        return `RP-проза (rp=${rpScore} sms=${smsScore})`;
     }
-
-    // 3) Третье лицо про юзера/контакт — прозаический пересказ событий
-    const thirdPersonMarkers = [
-        /\b(?:she|he)\s+(?:shared|told|explained|revealed|confessed|mentioned|asked|said|replied|sent|wrote)\b/i,
-        /(?:^|[^а-яёa-z])(?:она|он)\s+(?:поделилась?|рассказала?|объяснила?|призналась?|упомянула?|спросила?|сказала?|ответила?|отправила?|написала?|прислала?)/i,
-        /\b(?:the\s+user|user\s+(?:is|asks?|wants?|sent))/i,
-        /(?:^|[^а-яёa-z])пользовател[ья]\s+(?:пишет|просит|хочет|отправил|спрашивает)/i,
-        /\bduring\s+(?:the\s+)?(?:conversation|chat)/i,
-        /(?:^|[^а-яёa-z])во\s+время\s+(?:этого\s+)?разговора/i,
-        /\b(?:several|multiple|many)\s+times\b/i,
-        /(?:^|[^а-яёa-z])(?:несколько|много)\s+раз(?=[^а-яёa-z]|$)/i,
-    ];
-    let thirdPersonHits = 0;
-    for (const re of thirdPersonMarkers) {
-        if (re.test(t)) thirdPersonHits++;
-    }
-    if (thirdPersonHits >= 2) return `third_person(${thirdPersonHits})`;
-    // Даже одного хита достаточно если текст длинный
-    if (thirdPersonHits >= 1 && t.length > 200) return 'third_person_long';
-
-    // 4) Множество повествовательных предложений подряд (абзац)
-    const sentences = t.split(/[.!?]+\s+/).filter(s => s.trim().length > 10);
-    if (sentences.length >= 4 && t.length > 300) {
-        // 4+ полноценных предложения в длинном тексте — это проза, не SMS
-        return `narrative(${sentences.length} sentences)`;
-    }
-
-    // 5) Звёздочки-действия (*улыбнулся* etc.) — RP-ремарка
-    if (/\*[^*\n]{4,}\*/.test(t)) return 'rp_action_asterisks';
 
     return null;
 }
@@ -333,15 +384,30 @@ function parseQuoteAt(text, startIdx) {
 // ══════════════════════════════════════════════════════════
 
 // Основной regex: с закрывающим тегом
-const PHONE_TAG_RE = /\[PHONE\s+from=["']([^"']+)["'](?:\s+to=["']([^"']+)["'])?\]([\s\S]*?)\[\/PHONE\]/gi;
-// Fallback: без закрывающего тега — ловим до конца строки или до начала нового предложения с большой буквы
-const PHONE_TAG_NOCLOSE_RE = /\[PHONE\s+from=["']([^"']+)["'](?:\s+to=["']([^"']+)["'])?\]([^\n]*)/gi;
+// Толерантный: [PHONE from="Name"], [Phone from='Name'], [PHONE: from=Name], [PHONE from=Name to=User]
+const PHONE_TAG_RE = /\[(?:PHONE|phone|Phone):?\s+from=["']?([^"'\]\s][^"'\]]*?)["']?(?:\s+to=["']?([^"'\]\s][^"'\]]*?)["']?)?\]\s*:?\s*([\s\S]*?)\[\/(?:PHONE|phone|Phone)\]/gi;
+// Fallback: без закрывающего тега — ловим до конца строки
+const PHONE_TAG_NOCLOSE_RE = /\[(?:PHONE|phone|Phone):?\s+from=["']?([^"'\]\s][^"'\]]*?)["']?(?:\s+to=["']?([^"'\]\s][^"'\]]*?)["']?)?\]\s*:?\s*([^\n]*)/gi;
 
 function extractPhoneTags(rpText, userName) {
     if (!rpText || typeof rpText !== 'string') return [];
     const results = [];
     let m;
     const userLow = (userName || '').toLowerCase();
+
+    // [PHONE] тег = явное SMS от бота. Не фильтруем по to= — юзер может играть
+    // за персонажа чьё имя совпадает с NPC в ростере. to= используется только
+    // для красивого отображения в ST (📱 Niles → Kaelen), не для фильтрации.
+
+    // Дебаг
+    if (/\[(?:PHONE|phone)/i.test(rpText)) {
+        console.log(`[iMessage] extractPhoneTags input (${rpText.length} chars):`, rpText.slice(0, 300));
+        console.log(`[iMessage] extractPhoneTags userName="${userName}", userLow="${userLow}"`);
+        // Тест regex напрямую
+        const testRe = new RegExp(PHONE_TAG_RE.source, PHONE_TAG_RE.flags);
+        const testMatch = testRe.exec(rpText);
+        console.log(`[iMessage] extractPhoneTags regex test:`, testMatch ? `MATCH: from="${testMatch[1]}" to="${testMatch[2]}" body="${(testMatch[3]||'').slice(0,80)}"` : 'NO MATCH');
+    }
 
     // Сначала пробуем основной regex (с [/PHONE])
     let re = new RegExp(PHONE_TAG_RE.source, PHONE_TAG_RE.flags);
@@ -353,11 +419,8 @@ function extractPhoneTags(rpText, userName) {
         const body = m[3].trim();
         if (!contactName || !body) continue;
 
-        // Фильтр адресата: если указан to и он НЕ юзер — пропускаем
-        if (toName && userLow && toName.toLowerCase() !== userLow) {
-            console.log(`[iMessage] [PHONE] пропуск: от ${contactName} для ${toName} (не юзер)`);
-            continue;
-        }
+        // Логируем to= для дебага, но НЕ фильтруем — [PHONE] тег = явное SMS от бота
+        if (toName) console.log(`[iMessage] [PHONE] от ${contactName} для ${toName}`);
 
         const items = [];
         // Разбиваем по двойным переносам на отдельные сообщения
@@ -378,14 +441,13 @@ function extractPhoneTags(rpText, userName) {
                 // Если внутри тега несколько строк через одинарный \n — каждая отдельное сообщение
                 const lines = cleanText.split(/\n/).map(l => l.trim()).filter(l => l.length >= 2);
                 for (const line of lines) {
-                    // Стрипаем бэктики — бот оборачивает текст в ` `, нам нужен чистый текст
-                    const stripped = line.replace(/^`+|`+$/g, '').trim();
+                    // Стрипаем бэктики, все виды кавычек, markdown-остатки
+                    const stripped = line
+                        .replace(/^[`"""«»„'''「」『』]+|[`"""«»„'''「」『』]+$/g, '')
+                        .replace(/^\*+|\*+$/g, '')  // *italic* wrapping
+                        .trim();
                     if (stripped.length < 2) continue;
-                    const reason = detectRpParagraph(stripped);
-                    if (reason) {
-                        console.warn(`[iMessage] [PHONE] парсер отбросил: ${reason}. Текст: "${stripped.slice(0, 80)}"`);
-                        continue;
-                    }
+                    // [PHONE] тег = явное SMS, не фильтруем
                     items.push({ type: 'text', text: stripped });
                 }
             }
@@ -404,10 +466,8 @@ function extractPhoneTags(rpText, userName) {
             const body = m[3].trim();
             if (!contactName || !body) continue;
 
-            if (toName && userLow && toName.toLowerCase() !== userLow) {
-                console.log(`[iMessage] [PHONE] пропуск (no-close): от ${contactName} для ${toName}`);
-                continue;
-            }
+            // Не фильтруем — [PHONE] тег = явное SMS
+            if (toName) console.log(`[iMessage] [PHONE] fallback от ${contactName} для ${toName}`);
 
             const items = [];
             const photoRe2 = /\[photo:\s*([^\]]+)\]/gi;
@@ -416,7 +476,7 @@ function extractPhoneTags(rpText, userName) {
                 const prompt = pm[1].trim();
                 if (prompt.length >= 3) items.push({ type: 'photo', prompt });
             }
-            const cleanText = body.replace(/\[photo:\s*[^\]]+\]/gi, '').replace(/^`+|`+$/g, '').trim();
+            const cleanText = body.replace(/\[photo:\s*[^\]]+\]/gi, '').replace(/^[`"""«»„'''「」『』]+|[`"""«»„'''「」『』]+$/g, '').replace(/^\*+|\*+$/g, '').trim();
             if (cleanText.length >= 2) {
                 items.push({ type: 'text', text: cleanText });
             }
@@ -463,23 +523,41 @@ function extractVirtualMessagesFromText(rpText) {
     // ВАЖНО: используем non-greedy + fallback на одну из допустимых закрывающих.
     const Q = `[${OPEN_Q_RE}](${NOT_CLOSE_Q}+?)[${CLOSE_Q_RE}]`;
 
-    // Паттерны — все поддерживают любые кавычки
-    const patterns = [
-        // RU: Имя [глагол]: «текст»
+    // Общий блок RU/EN глаголов отправки сообщений (для переиспользования)
+    const RU_VERBS = `(?:написал[аи]?|пишет|отправил[аи]?|отправляет|печатает|напечатал[аи]?|прислал[аи]?|скинул[аи]?|шлёт|шлет|набирает|набрал[аи]?|кидает|кинул[аи]?|скидывает|присылает|послал[аи]?)`;
+    const EN_VERBS = `(?:texts?|sends?|writes?|types?|messages?|texted|messaged|typed|replied|responds?)`;
+    const RU_TARGETS = `(?:\\s+(?:тебе|ей|ему|мне|нам|в\\s+телефон|в\\s+мессенджер|в\\s+(?:i?message|ватсап|whatsapp|телеграм|telegram)|сообщение|смс|SMS|фото|селфи|картинку|снимок))*`;
+    const EN_TARGETS = `(?:\\s+(?:a\\s+)?(?:text|message|photo|selfie|pic(?:ture)?|image|back))?`;
+
+    // ═══════════════════════════════════════════════════════════
+    // ПАТТЕРНЫ С КАВЫЧКАМИ (высокая точность)
+    // ═══════════════════════════════════════════════════════════
+    const quotedPatterns = [
+        // RU: Имя [глагол] [цель]: «текст»
         new RegExp(
-            `([А-ЯЁA-Z][а-яёa-z]+)\\s+(?:написал|написала|пишет|отправил|отправила|печатает|напечатал|напечатала|прислал|прислала|скинул|скинула|шлёт|шлет)(?:\\s+(?:тебе|ей|ему|в\\s+телефон|в\\s+мессенджер|в\\s+(?:i?message|ватсап|whatsapp|телеграм|telegram)|сообщение|фото|селфи|картинку|снимок))*\\s*[:\\-—]\\s*${Q}`,
+            `([А-ЯЁA-Z][а-яёa-z]+)\\s+${RU_VERBS}${RU_TARGETS}\\s*[:\\-—]?\\s*${Q}`,
             'gi'
         ),
-        // EN: Name texts/sends/writes/types: "text"
+        // EN: Name texts/sends/writes: "text"
         new RegExp(
-            `([A-ZА-ЯЁ][a-zа-яё]+)\\s+(?:texts?|sends?\\s+(?:a\\s+)?(?:text|message|photo|selfie|pic(?:ture)?|image)|writes?|types?|messages?)\\s*[:\\-—]\\s*${Q}`,
+            `([A-ZА-ЯЁ][a-zа-яё]+)\\s+${EN_VERBS}${EN_TARGETS}\\s*[:\\-—]?\\s*${Q}`,
+            'gi'
+        ),
+        // Обратный порядок RU: «текст» — написал Имя / «текст», написал Имя
+        new RegExp(
+            `${Q}\\s*[,—–\\-]\\s*${RU_VERBS}\\s+([А-ЯЁA-Z][а-яёa-z]+)`,
+            'gi'
+        ),
+        // Обратный порядок EN: "text" — texted Name / "text", Name texted
+        new RegExp(
+            `${Q}\\s*[,—–\\-]\\s*(?:${EN_VERBS}\\s+)?([A-ZА-ЯЁ][a-zа-яё]+)(?:\\s+${EN_VERBS})?`,
             'gi'
         ),
     ];
 
     // Фото-глаголы: Имя прислал фото: "..."
     const photoVerbRegex = new RegExp(
-        `([А-ЯЁA-Z][а-яёa-z]+|[A-ZА-ЯЁ][a-zа-яё]+)\\s+(?:прислал[аи]?|отправил[аи]?|скинул[аи]?|шл[её]т|sends?)(?:\\s+(?:мне|тебе|ей|ему|me|him|her))?\\s+(?:фото|селфи|картинку|снимок|photo|selfie|pic(?:ture)?|image|a\\s+photo|a\\s+selfie|a\\s+pic(?:ture)?)\\s*[:\\-—]?\\s*${Q}`,
+        `([А-ЯЁA-Z][а-яёa-z]+|[A-ZА-ЯЁ][a-zа-яё]+)\\s+(?:прислал[аи]?|отправил[аи]?|скинул[аи]?|шл[её]т|sends?|sent|attached)(?:\\s+(?:мне|тебе|ей|ему|me|him|her))?\\s+(?:фото|селфи|картинку|снимок|photo|selfie|pic(?:ture)?|image|a\\s+photo|a\\s+selfie|a\\s+pic(?:ture)?)\\s*[:\\-—]?\\s*${Q}`,
         'gi'
     );
 
@@ -487,9 +565,10 @@ function extractVirtualMessagesFromText(rpText) {
     const photoOnlyMatches = [];
     let pm;
     while ((pm = photoVerbRegex.exec(text)) !== null) {
+        const prompt = (pm[2] || '').trim();
         photoOnlyMatches.push({
             name: pm[1].trim(),
-            prompt: pm[2].trim(),
+            prompt,
             start: pm.index,
             end: pm.index + pm[0].length,
         });
@@ -500,29 +579,45 @@ function extractVirtualMessagesFromText(rpText) {
         results.push({
             contactName: p.name,
             items: [{ type: 'photo', prompt: cleanPrompt }],
-            _explicit: true,  // явный формат «Имя прислал фото: "..."» — можно создавать контакт
+            _explicit: true,
         });
     }
     const inPhotoRange = (pos) => photoOnlyMatches.some(p => pos >= p.start && pos < p.end);
 
-    // 2) Обычные text-реплики (Имя глагол: "...")
+    // 2) Реплики С КАВЫЧКАМИ (Имя глагол: "...")
     const coveredRanges = photoOnlyMatches.map(p => [p.start, p.end]);
-    for (const re of patterns) {
+
+    // Прямые паттерны (первые 2): группа 1 = имя, группа 2 = текст
+    for (let pi = 0; pi < 2 && pi < quotedPatterns.length; pi++) {
+        const re = quotedPatterns[pi];
         let m;
         while ((m = re.exec(text)) !== null) {
             if (inPhotoRange(m.index)) continue;
-            const name = m[1].trim();
-            const msg = m[2].trim();
-            if (msg.length < 2) continue;
-
+            const name = (m[1] || '').trim();
+            const msg = (m[2] || '').trim();
+            if (!name || msg.length < 2) continue;
             const items = splitTextAndPhotos(msg);
             const cleanItems = filterItems(items, name);
             if (!cleanItems.length) continue;
-            results.push({
-                contactName: name,
-                items: cleanItems,
-                _explicit: true,  // явный формат «Имя texts: "..."» — можно создавать контакт
-            });
+            results.push({ contactName: name, items: cleanItems, _explicit: true });
+            coveredRanges.push([m.index, m.index + m[0].length]);
+        }
+    }
+
+    // Обратные паттерны (последние 2): группа 1 = текст, группа 2 = имя
+    for (let pi = 2; pi < quotedPatterns.length; pi++) {
+        const re = quotedPatterns[pi];
+        let m;
+        while ((m = re.exec(text)) !== null) {
+            if (inPhotoRange(m.index)) continue;
+            if (coveredRanges.some(([s, e]) => m.index >= s && m.index < e)) continue;
+            const msg = (m[1] || '').trim();
+            const name = (m[2] || '').trim();
+            if (!name || msg.length < 2) continue;
+            const items = splitTextAndPhotos(msg);
+            const cleanItems = filterItems(items, name);
+            if (!cleanItems.length) continue;
+            results.push({ contactName: name, items: cleanItems, _explicit: true });
             coveredRanges.push([m.index, m.index + m[0].length]);
         }
     }
@@ -543,8 +638,8 @@ function extractVirtualMessagesFromText(rpText) {
     //    фильтруем цитаты по близости к speech/action-глаголам.
     const inCoveredRange = (pos) => coveredRanges.some(([s, e]) => pos >= s && pos < e);
 
-    const phoneContextRe = /(?:^|[^а-яёa-z])(?:сообщени|уведомлени|экран|телефон|дисплей|мессенджер|i?message|whatsapp|ватсап|telegram|телеграм|чат[ае]?|написал|отправил|прислал|набрал|пишет|набранн|[пП]рилетел)/i;
-    const phoneContextReEn = /\b(?:notification|screen|phone|message|text(?:ing)?|texted|texts|messaged|typed|typing|sent|replied|chat|i?message|whatsapp|telegram)\b/i;
+    const phoneContextRe = /(?:^|[^а-яёa-z])(?:сообщени|уведомлени|экран|телефон|дисплей|мессенджер|i?message|whatsapp|ватсап|telegram|телеграм|чат[ае]?|написал|отправил|прислал|набрал|набирает|печатает|пишет|набранн|[пП]рилетел|скинул|кинул|послал|смс|SMS|вибрир|звонок|рингтон)/i;
+    const phoneContextReEn = /\b(?:notification|screen|phone|message|text(?:ing|ed|s)?|messaged|typed|typing|sent|replied|chat|i?message|whatsapp|telegram|buzz(?:ed|es|ing)?|vibrat(?:ed|es|ing)?|ringtone|incoming)\b/i;
     const speechContextRe = /(?:^|[^а-яёa-z])(?:сказал|сказала|ответил|ответила|произнёс|произнес|произнесла|буркнул|буркнула|фыркнул|фыркнула|хмыкнул|хмыкнула|крикнул|крикнула|прошептал|прошептала|проворчал|проворчала|рявкнул|рявкнула)(?=[^а-яёa-z]|$)/i;
     const speechContextReEn = /\b(?:said|whispered|muttered|snapped|shouted|replied)\b/i;
     const actionVerbRe = /(?:^|[^а-яёa-z])(?:вытянул|вытянула|повернул|повернула|повернулся|повернулась|разбло|заглянул|заглянула|перехватил|перехватила|наклонил|наклонила|подошёл|подошла|поднял|подняла|опустил|опустила|посмотрел|посмотрела|взглянул|взглянула|кивнул|кивнула|пожал|пожала|ударил|ударила|схватил|схватила|бубнил|бубнила|глянул|глянула|фыркнул|фыркнула)/i;
@@ -735,7 +830,7 @@ function rpTextWorthAnalyzing(text) {
     const hasQuotes = /["\u201C\u201D«»\u300C\u300D\u300E\u300F„"'‘’]/.test(text);
     if (!hasQuotes) return false;
     // Хотя бы один phone-маркер ИЛИ имя контакта?
-    const phoneOrName = /(?:сообщени|уведомлени|экран|телефон|мессенджер|i?message|telegram|телеграм|whatsapp|ватсап|написал|отправил|прислал|пишет|набрал|texts?|messaged|typed|phone|screen|notification)/i;
+    const phoneOrName = /(?:сообщени|уведомлени|экран|телефон|мессенджер|i?message|telegram|телеграм|whatsapp|ватсап|написал|отправил|прислал|пишет|набрал|набирает|печатает|скинул|кинул|послал|смс|SMS|вибрир|звонок|рингтон|дисплей|texts?|texted|messaged|typed|typing|phone|screen|notification|buzz|vibrat|ringtone|incoming|sends?\s+(?:a\s+)?(?:text|message)|writes?\s+(?:a\s+)?(?:text|message))/i;
     if (phoneOrName.test(text)) return true;
     // Или упоминание любого известного контакта
     const ROSTER = getRoster();
@@ -1303,6 +1398,12 @@ export async function syncFromMainChat() {
             const botName = msg.name || c.name2 || '';
             const prevText = i > 0 ? String(chat[i - 1]?.mes || '').replace(/<[^>]+>/g, '').slice(-500) : '';
 
+            // Дебаг: показать что видит парсер
+            if (/\[(?:PHONE|phone)/i.test(rawMes) || /\[(?:PHONE|phone)/i.test(text)) {
+                console.log(`[iMessage] DEBUG rawMes:`, rawMes.slice(0, 500));
+                console.log(`[iMessage] DEBUG text after strip:`, text.slice(0, 500));
+            }
+
             // 1) [PHONE] теги — приоритет
             const userName = c.name1 || '';
             extracted = extractPhoneTags(text, userName);
@@ -1336,6 +1437,7 @@ export async function syncFromMainChat() {
                     if (extracted.length) console.log(`[iMessage] regex-парсер: ${extracted.length} групп`);
                 }
             }
+            console.log(`[iMessage] extracted total: ${extracted.length} групп, items: ${extracted.map(r => r.items.length).join(',')}`, extracted.map(r => ({ name: r.contactName, items: r.items.map(it => it.type === 'text' ? it.text.slice(0, 40) : '[photo]') })));
             for (const rec of extracted) {
                 // Ищем существующего ИЛИ создаём нового контакта автоматом
                 let contactId = findContactIdByName(rec.contactName);
@@ -1358,7 +1460,7 @@ export async function syncFromMainChat() {
                     if (item.type === 'text') {
                         // Дедуп по тексту в последних 6 сообщениях
                         const dup = recent.some(m => m.from === 'contact' && m.text === item.text);
-                        if (dup) continue;
+                        if (dup) { console.log(`[iMessage] ДЕДУП: пропуск "${item.text.slice(0, 50)}"`); continue; }
                         pushMessage(contactId, { from: 'contact', text: item.text, _fromMainChat: true });
                         if (state.openContactId !== contactId) bumpUnread(contactId);
                         pushed++;
@@ -1826,23 +1928,27 @@ export function syncToMainChat() {
         if (langInject === 'russian') {
             lines.push(`## Формат SMS в RP`);
             lines.push(`Когда ЛЮБОЙ персонаж отправляет SMS/сообщение в мессенджере — оформи СТРОГО так:`);
-            lines.push(`[PHONE from="Имя отправителя" to="${userLabel}"]` + '`текст сообщения`[/PHONE]');
-            lines.push(`Текст ВСЕГДА оборачивай в бэктики \`вот так\`. Несколько сообщений подряд — каждое на отдельной строке внутри тега, каждое в бэктиках.`);
+            lines.push(`[PHONE from="Имя отправителя"]текст сообщения[/PHONE]`);
+            lines.push(`Текст пиши как есть — без кавычек, бэктиков или markdown. Просто чистый текст SMS.`);
+            lines.push(`Несколько сообщений подряд — каждое на отдельной строке внутри тега.`);
             lines.push(`Если сообщение адресовано НЕ ${userLabel}, а другому персонажу — укажи to="Имя получателя".`);
-            lines.push(`Фото/селфи: [PHONE from="Имя" to="${userLabel}"][photo: описание на английском, 10-20 слов][/PHONE]`);
+            lines.push(`Фото/селфи: [PHONE from="Имя"][photo: описание на английском, 10-20 слов][/PHONE]`);
         } else {
             lines.push(`## SMS format in RP`);
             lines.push(`When ANY character sends a text/iMessage/SMS, use this EXACT format:`);
-            lines.push(`[PHONE from="SenderName" to="${userLabel}"]` + '`message text`[/PHONE]');
-            lines.push('Text MUST ALWAYS be wrapped in backticks `like this`. Multiple messages — each on its own line inside the tag, each in backticks.');
+            lines.push(`[PHONE from="SenderName"]message text[/PHONE]`);
+            lines.push(`Write the text as-is — no quotes, no backticks, no markdown. Just plain SMS text.`);
+            lines.push(`Multiple messages — each on its own line inside the tag.`);
             lines.push(`If the message is NOT for ${userLabel} but for another character, set to="RecipientName".`);
-            lines.push(`Photos/selfies: [PHONE from="Name" to="${userLabel}"][photo: english description, 10-20 words][/PHONE]`);
+            lines.push(`Photos/selfies: [PHONE from="Name"][photo: english description, 10-20 words][/PHONE]`);
         }
         lines.push('');
-        lines.push(`⚠ ALWAYS close with [/PHONE]. Inside [PHONE]...[/PHONE] — ONLY real SMS text (what a person types with thumbs). NO narrative, NO third-person prose. ALWAYS use backticks.`);
-        lines.push(`❌ WRONG: [PHONE from="Name" to="${userLabel}"]She shared her traumatic story.[/PHONE]`);
-        lines.push(`✅ CORRECT: [PHONE from="Name" to="${userLabel}"]` + '`damn that\'s heavy. I\'m here`[/PHONE]');
-        lines.push(`✅ CORRECT: [PHONE from="Name" to="${userLabel}"][photo: selfie in locker room, wet hair][/PHONE]`);
+        lines.push(`⚠ ALWAYS close with [/PHONE]. Inside [PHONE]...[/PHONE] — ONLY real SMS text (what a person types with thumbs). NO narrative, NO third-person prose.`);
+        lines.push(`❌ WRONG: [PHONE from="Name"]She shared her traumatic story about childhood.[/PHONE]`);
+        lines.push(`✅ CORRECT: [PHONE from="Name"]damn that's heavy. I'm here[/PHONE]`);
+        lines.push(`✅ CORRECT: [PHONE from="Name"]hey`);
+        lines.push(`wanna hang out?[/PHONE]`);
+        lines.push(`✅ CORRECT: [PHONE from="Name"][photo: selfie in locker room, wet hair][/PHONE]`);
         lines.push('');
 
         // Список контактов — чтобы бот использовал точные имена в from=""
@@ -1899,7 +2005,7 @@ export function syncToMainChat() {
     const otherConvs = activeConvs.filter(c => c.id !== mainBotContactId).slice(0, 6);
     if (otherConvs.length) {
         lines.push(`## Other active iMessage threads (${userLabel} is texting these NPCs in parallel):`);
-        lines.push(`These are NPCs — NOT the main-chat character. You don't play them directly in the main reply, but you know these threads exist and may let them influence the plot.${settings.phoneTagInject !== false ? ` An NPC can send a message using: [PHONE from="NpcName" to="${userLabel}"]\`message\`[/PHONE] — SMS format only (short, first-person, no prose, always backticks).` : ''}`);
+        lines.push(`These are NPCs — NOT the main-chat character. You don't play them directly in the main reply, but you know these threads exist and may let them influence the plot.${settings.phoneTagInject !== false ? ` An NPC can send a message using: [PHONE from="NpcName"]message text[/PHONE] — SMS format only (short, first-person, no prose, plain text).` : ''}`);
         lines.push('');
 
         const othersN = settings.injectOthersLastN || 5;
@@ -1969,7 +2075,7 @@ export function syncToMainChat() {
             chinese: 'Chinese',
             korean: 'Korean',
         }[lang] || lang;
-        lines.push(`## Language: text messages in iMessage are written in ${langHuman}.${settings.phoneTagInject !== false ? ` Inside [PHONE] tags, the text must be in ${langHuman}.` : ` When you produce \`Name texts: "..."\` lines, the quoted text must be in ${langHuman}.`}`);
+        lines.push(`## Language: text messages in iMessage are written in ${langHuman}.${settings.phoneTagInject !== false ? ` Inside [PHONE] tags, the text must be in ${langHuman}.` : ` When you produce Name texts: "..." lines, the quoted text must be in ${langHuman}.`}`);
     }
 
     if (lines.length <= 3) {

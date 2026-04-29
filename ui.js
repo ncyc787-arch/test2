@@ -13,7 +13,7 @@ import {
     generateContactReply, generateAvatar, syncToMainChat, syncFromMainChat,
     regenerateChatImage, captionUserImage, debugInjection, refreshAllSummaries,
     generateRpSummary, saveManualRpSummary, clearRpSummary, getRpSummary,
-    forceRefreshContactSummary,
+    forceRefreshContactSummary, getImessageLogs,
 } from './engine.js';
 import { fetchModels, isExtraLLMConfigured, isImageApiConfigured } from './api.js';
 import { STICKER_PACKS, getPackOrder, stickerUrl, findStickerById, getAllStickers } from './stickers.js';
@@ -717,6 +717,10 @@ function viewSettings() {
         <button class="im-set-btn small" data-im-action="refresh-summaries">Обновить саммари сейчас</button>
         <button class="im-set-btn" data-im-action="view-rp-events">События RP (что контакты знают о жизни ${esc(settings.profile?.name || 'тебя')})</button>
 
+        <h3 class="im-set-section">Диагностика</h3>
+        <button class="im-set-btn small" data-im-action="copy-logs">📋 Копировать логи iMessage</button>
+        <p style="font-size:0.8em;color:#888;margin:4px 0 0">Копирует последние логи расширения в буфер обмена. Полезно для дебага.</p>
+
         <h3 class="im-set-section">Опасная зона</h3>
         <button class="im-set-btn danger" data-im-action="reset-state">Сбросить всё в этом чате</button>
     </div>
@@ -1208,6 +1212,24 @@ export async function handleAction(action, contactId, evt) {
     else if (action === 'show-injection') {
         const data = debugInjection();
         alert('Что идёт в чат ST:\n\n' + (data.currentText || '(пусто)'));
+    }
+    else if (action === 'copy-logs') {
+        const logs = getImessageLogs();
+        const btn = evt?.target?.closest?.('button');
+        try {
+            navigator.clipboard.writeText(logs);
+            if (btn) { const orig = btn.textContent; btn.textContent = '✅ Скопировано!'; setTimeout(() => btn.textContent = orig, 2000); }
+        } catch {
+            // Fallback — показать в текстовом поле
+            const ta = document.createElement('textarea');
+            ta.value = logs;
+            ta.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:50%;z-index:99999;font-size:11px;font-family:monospace';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch {}
+            setTimeout(() => ta.remove(), 30000);
+            if (btn) { const orig = btn.textContent; btn.textContent = '✅ Открыто (Ctrl+C)'; setTimeout(() => btn.textContent = orig, 3000); }
+        }
     }
     else if (action === 'refresh-summaries') {
         const btn = evt?.target?.closest?.('button');
