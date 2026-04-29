@@ -1339,7 +1339,6 @@ export async function syncFromMainChat() {
             for (const rec of extracted) {
                 // Ищем существующего ИЛИ создаём нового контакта автоматом
                 let contactId = findContactIdByName(rec.contactName);
-                console.log(`[iMessage] findContactIdByName("${rec.contactName}") → ${contactId || 'NOT FOUND'}`, 'roster keys:', Object.keys(getRoster()));
                 if (!contactId) {
                     // Только для явных сообщений (rec._explicit) создаём контакт.
                     // Для orphan-режима (где имя угадано по контексту) — только существующие.
