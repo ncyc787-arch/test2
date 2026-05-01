@@ -163,20 +163,34 @@ function viewList() {
         </div>`;
     }).join('');
 
+    const currentThemeList = (getSettings().phoneTheme || 'default');
+    const isHiganbana = currentThemeList === 'higanbana';
+    const listTitle = isHiganbana ? 'メッセージ' : 'Сообщения';
+    const searchPlaceholder = isHiganbana ? '検索...' : 'Поиск';
+
+    const higanbanaStrip = isHiganbana ? `
+    <div class="im-flower-strip">
+        <img src="/scripts/extensions/third-party/test2/higanbana-strip.jpeg" alt="" />
+    </div>` : '';
+
+    const sectionLabel = isHiganbana ? `<div class="im-section-label">// 連絡先</div>` : '';
+
     return wrap(`
     <div class="im-header im-header-main">
         <div class="im-header-actions-left">
             <span class="im-header-btn" data-im-action="view-settings">${ICONS.gear}</span>
         </div>
-        <div class="im-header-title">Сообщения</div>
+        <div class="im-header-title">${listTitle}</div>
         <div class="im-header-actions-right">
             <span class="im-header-btn" data-im-action="view-me">${ICONS.user}</span>
             <span class="im-header-btn" data-im-action="close-app" title="Закрыть iMessage">${ICONS.close}</span>
         </div>
     </div>
+    ${higanbanaStrip}
     <div class="im-search">
-        <input type="text" class="im-search-input" placeholder="Поиск" data-im-search>
+        <input type="text" class="im-search-input" placeholder="${searchPlaceholder}" data-im-search>
     </div>
+    ${sectionLabel}
     <div class="im-list">${rows}</div>
     `, 'list');
 }
@@ -867,6 +881,7 @@ export function showContextMenu(contactId, msgTs, msg, anchorRect, isLastContact
     const currentTheme = getSettings().phoneTheme || 'default';
     if (currentTheme === 'kawaii') menu.classList.add('im-theme-kawaii');
     else if (currentTheme === 'cyberpunk') menu.classList.add('im-theme-cyberpunk');
+    else if (currentTheme === 'higanbana') menu.classList.add('im-theme-higanbana');
 
     // --- Пункты ---
     const items = [];
@@ -1015,6 +1030,7 @@ export function applyTheme() {
     if (fab) {
         fab.classList.toggle('im-fab-kawaii', theme === 'kawaii');
         fab.classList.toggle('im-fab-cyberpunk', theme === 'cyberpunk');
+        fab.classList.toggle('im-fab-higanbana', theme === 'higanbana');
 
         // Размер иконки
         const size = getSettings().fabSize || 56;
@@ -1027,6 +1043,7 @@ export function applyTheme() {
             const themeIcons = {
                 kawaii: { src: '/scripts/extensions/third-party/test2/fab-kawaii.png', alt: '♡' },
                 cyberpunk: { src: '/scripts/extensions/third-party/test2/fab-cyberpunk.png', alt: '⚡' },
+                higanbana: { src: '/scripts/extensions/third-party/test2/fab-higanbana.png', alt: '🌺' },
             };
             const iconInfo = themeIcons[theme];
             if (iconInfo) {

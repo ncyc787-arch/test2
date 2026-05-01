@@ -1,5 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@400;700&family=Rajdhani:wght@500;600;700&display=swap');
 
 /* ═══════════════════════════════════════════
    iMessage Extension — стили в духе Apple iMessage
@@ -1342,6 +1343,19 @@ select.im-set-input option {
     .im-app[data-theme="cyberpunk"] .im-chat-send {
         min-width: 40px; min-height: 40px;
     }
+
+    /* ── Higanbana mobile ── */
+    .im-app[data-theme="higanbana"] {
+        --im-radius-app: 0 !important;
+        border: none !important;
+        --im-shadow-app: none;
+    }
+    .im-app[data-theme="higanbana"] .im-header-btn {
+        min-width: 44px; min-height: 44px;
+    }
+    .im-app[data-theme="higanbana"] .im-chat-send {
+        min-width: 40px; min-height: 40px;
+    }
 }
 
 /* ── LONG PRESS — визуальный фидбек ── */
@@ -1763,6 +1777,20 @@ select.im-set-input option {
     background: #1e0e40;
     border: 1px solid #7b5ce5;
     color: #e8d9ff;
+    position: relative;
+    overflow: visible;
+    z-index: 0;
+}
+.im-app[data-theme="cyberpunk"] .im-msg-user::before {
+    content: '';
+    position: absolute;
+    inset: -10px;
+    background-image: url('border-user.png');
+    background-size: 100% 100%;
+    background-repeat: no-repeat;
+    pointer-events: none;
+    z-index: -1;
+    opacity: .85;
 }
 .im-app[data-theme="cyberpunk"] .im-msg-user.im-msg-tail {
     border-bottom-right-radius: 3px;
@@ -1771,6 +1799,20 @@ select.im-set-input option {
     background: #110828;
     border: 1px solid #2a1a55;
     color: #c4a8ff;
+    position: relative;
+    overflow: visible;
+    z-index: 0;
+}
+.im-app[data-theme="cyberpunk"] .im-msg-contact::before {
+    content: '';
+    position: absolute;
+    inset: -10px;
+    background-image: url('border-contact.png');
+    background-size: 100% 100%;
+    background-repeat: no-repeat;
+    pointer-events: none;
+    z-index: -1;
+    opacity: .85;
 }
 .im-app[data-theme="cyberpunk"] .im-msg-contact.im-msg-tail {
     border-bottom-left-radius: 3px;
@@ -1990,4 +2032,321 @@ select.im-set-input option {
     border-radius: 2px;
     border-color: #0a0a12;
     box-shadow: 0 0 6px rgba(0, 255, 255, .5);
+}
+
+/* ═══════════════════════════════════════════
+   THEME: Higanbana (彼岸花) — японская эстетика
+   ═══════════════════════════════════════════ */
+.im-app[data-theme="higanbana"] {
+    --im-bg: #080608;
+    --im-bg-header: #0c0608;
+    --im-bg-input: #0c0608;
+    --im-bg-msg-user: #1a0508;
+    --im-bg-msg-contact: #0f0508;
+    --im-bg-field: #0f0508;
+    --im-bg-section: rgba(139, 0, 0, .06);
+    --im-color: #e8c4c4;
+    --im-color-muted: #4a1a1a;
+    --im-color-accent: #c0392b;
+    --im-color-danger: #ff4444;
+    --im-color-success: #70d281;
+    --im-border: #2a0a0a;
+    --im-border-light: #1a0505;
+    --im-border-header: #1a0505;
+    --im-radius-app: 20px;
+    --im-radius-msg: 10px;
+    --im-radius-btn: 8px;
+    --im-radius-field: 8px;
+    --im-radius-section: 10px;
+    --im-radius-avatar: 12px;
+    --im-radius-badge: 9px;
+    --im-radius-input-btn: 8px;
+    --im-font: 'Rajdhani', 'Noto Serif JP', sans-serif;
+    --im-shadow-app: 0 0 30px rgba(139, 0, 0, .1), 0 0 60px rgba(139, 0, 0, .03);
+    border: 1px solid #2a0a0a;
+}
+
+/* Higanbana: header */
+.im-app[data-theme="higanbana"] .im-header {
+    background: #0c0608;
+    border-bottom: 1px solid #1a0505;
+    backdrop-filter: none;
+    position: relative;
+}
+.im-app[data-theme="higanbana"] .im-header::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #8b0000 30%, #c0392b 50%, #8b0000 70%, transparent);
+}
+.im-app[data-theme="higanbana"] .im-header-title {
+    font-family: 'Noto Serif JP', serif;
+    letter-spacing: 0.15em;
+    font-size: 14px;
+    color: #e8c4c4;
+}
+.im-app[data-theme="higanbana"] .im-header-btn {
+    color: #8b0000;
+    opacity: .7;
+}
+.im-app[data-theme="higanbana"] .im-header-btn:hover,
+.im-app[data-theme="higanbana"] .im-header-btn:active {
+    background: rgba(139, 0, 0, .12);
+    opacity: 1;
+}
+
+/* Higanbana: flower strip */
+.im-app[data-theme="higanbana"] .im-flower-strip {
+    height: 64px;
+    background: #0a0406;
+    border-bottom: 1px solid #1a0505;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.im-app[data-theme="higanbana"] .im-flower-strip img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: .85;
+}
+
+/* Higanbana: chat wallpaper */
+.im-app[data-theme="higanbana"] .im-chat-body {
+    background: #080608;
+    position: relative;
+}
+.im-app[data-theme="higanbana"] .im-chat-body::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: url('higanbana-chat-bg-blur.webp');
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    opacity: .25;
+    pointer-events: none;
+    z-index: 0;
+}
+.im-app[data-theme="higanbana"] .im-chat-body > * {
+    position: relative;
+    z-index: 1;
+}
+
+/* Higanbana: section label */
+.im-app[data-theme="higanbana"] .im-section-label {
+    padding: 7px 14px 5px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 9px;
+    color: #4a1a1a;
+    letter-spacing: 0.2em;
+    background: #080608;
+    border-bottom: 1px solid #130305;
+}
+
+/* Higanbana: messages */
+.im-app[data-theme="higanbana"] .im-msg-user {
+    background: #1a0508;
+    border: 1px solid #8b0000;
+    color: #f0d0d0;
+}
+.im-app[data-theme="higanbana"] .im-msg-user.im-msg-tail {
+    border-bottom-right-radius: 2px;
+}
+.im-app[data-theme="higanbana"] .im-msg-contact {
+    background: #0f0508;
+    border: 1px solid #2a0808;
+    color: #c4a0a0;
+}
+.im-app[data-theme="higanbana"] .im-msg-contact.im-msg-tail {
+    border-bottom-left-radius: 2px;
+}
+
+/* Higanbana: input */
+.im-app[data-theme="higanbana"] .im-chat-input {
+    border-top: 1px solid #1a0505;
+    background: #0c0608;
+}
+.im-app[data-theme="higanbana"] .im-chat-field {
+    background: #0f0508;
+    border: 1px solid #2a0808;
+    color: #c4a0a0;
+}
+.im-app[data-theme="higanbana"] .im-chat-field:focus {
+    border-color: #8b0000;
+}
+.im-app[data-theme="higanbana"] .im-chat-field::placeholder { color: #2a0808; }
+.im-app[data-theme="higanbana"] .im-chat-send {
+    background: #1a0508;
+    border: 1px solid #8b0000;
+    color: #c0392b;
+}
+.im-app[data-theme="higanbana"] .im-chat-send:hover {
+    background: #2a0808;
+    color: #e8c4c4;
+}
+.im-app[data-theme="higanbana"] .im-chat-attach { color: #8b0000; opacity: .5; }
+.im-app[data-theme="higanbana"] .im-chat-attach:hover { opacity: 1; }
+
+/* Higanbana: search */
+.im-app[data-theme="higanbana"] .im-search {
+    background: #0c0608;
+    border-bottom: 1px solid #150305;
+}
+.im-app[data-theme="higanbana"] .im-search-input {
+    background: #0f0608;
+    border: 1px solid #3a0a0a;
+    color: #d4a0a0;
+}
+.im-app[data-theme="higanbana"] .im-search-input::placeholder { color: #3a1a1a; }
+.im-app[data-theme="higanbana"] .im-search-input:focus { border-color: #8b0000; }
+
+/* Higanbana: list */
+.im-app[data-theme="higanbana"] .im-list-row:hover,
+.im-app[data-theme="higanbana"] .im-list-row:active {
+    background: #0f0508;
+}
+.im-app[data-theme="higanbana"] .im-list-row.has-unread::before {
+    background: #8b0000;
+}
+.im-app[data-theme="higanbana"] .im-avatar {
+    border: 1px solid #8b0000;
+}
+
+/* Higanbana: buttons */
+.im-app[data-theme="higanbana"] .im-sticker-btn {
+    background: rgba(139, 0, 0, .12);
+}
+.im-app[data-theme="higanbana"] .im-sticker-btn:hover {
+    background: rgba(139, 0, 0, .2);
+}
+.im-app[data-theme="higanbana"] .im-set-btn {
+    background: rgba(139, 0, 0, .12);
+    border-color: rgba(139, 0, 0, .3);
+    color: #c0392b;
+}
+.im-app[data-theme="higanbana"] .im-set-btn:hover {
+    background: rgba(139, 0, 0, .22);
+}
+.im-app[data-theme="higanbana"] .im-set-btn.danger {
+    background: rgba(255, 68, 68, .12);
+    border-color: rgba(255, 68, 68, .35);
+    color: #ff4444;
+}
+
+/* Higanbana: typing */
+.im-app[data-theme="higanbana"] .im-typing span { background: #8b0000; }
+
+/* Higanbana: date */
+.im-app[data-theme="higanbana"] .im-date-sep b {
+    color: #8b0000;
+    font-family: 'Noto Serif JP', serif;
+}
+
+/* Higanbana: sticker panel */
+.im-app[data-theme="higanbana"] .im-sticker-panel {
+    background: #0c0608;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    border-top: 1px solid #1a0505;
+}
+.im-app[data-theme="higanbana"] .im-sticker-thumb {
+    background: rgba(139, 0, 0, .06);
+}
+.im-app[data-theme="higanbana"] .im-sticker-thumb:hover {
+    background: rgba(139, 0, 0, .15);
+}
+
+/* Higanbana: scrollbar */
+.im-app[data-theme="higanbana"] ::-webkit-scrollbar-thumb {
+    background: #2a0808 !important;
+}
+
+/* Higanbana: me-avatar */
+.im-app[data-theme="higanbana"] .im-me-avatar {
+    border-radius: 12px;
+}
+.im-app[data-theme="higanbana"] .im-me-avatar-fallback {
+    background: linear-gradient(135deg, #1a0508, #0f0508);
+}
+
+/* Higanbana: status badges */
+.im-app[data-theme="higanbana"] .im-status.ok { color: #70d281; background: rgba(112, 210, 129, .12); }
+.im-app[data-theme="higanbana"] .im-status.warn { color: #e4a64e; background: rgba(228, 166, 78, .12); }
+.im-app[data-theme="higanbana"] .im-status.err { color: #ff4444; background: rgba(255, 68, 68, .12); }
+
+/* Higanbana: select dropdown */
+.im-app[data-theme="higanbana"] select.im-set-input {
+    background-image: linear-gradient(45deg, transparent 50%, #8b0000 50%), linear-gradient(135deg, #8b0000 50%, transparent 50%);
+}
+
+/* Higanbana: statusbar */
+.im-app[data-theme="higanbana"] .im-statusbar {
+    background: #060406;
+    color: #c0392b;
+    opacity: 1;
+    font-size: 11px;
+    border-bottom: 1px solid #1a0505;
+    position: relative;
+}
+.im-app[data-theme="higanbana"] .im-statusbar::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #8b0000 30%, #c0392b 50%, #8b0000 70%, transparent);
+}
+
+/* ── Higanbana: контекстное меню (вне .im-app) ── */
+.im-ctx-menu.im-theme-higanbana {
+    background: rgba(8, 6, 8, .95);
+    border: 1px solid #2a0a0a;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+}
+.im-ctx-menu.im-theme-higanbana .im-ctx-item {
+    color: #e8c4c4;
+    border-color: #1a0505;
+}
+.im-ctx-menu.im-theme-higanbana .im-ctx-item:active {
+    background: #0f0508;
+}
+.im-ctx-menu.im-theme-higanbana .im-ctx-item.danger { color: #ff4444; }
+
+/* ── Higanbana: FAB ── */
+#imessage-fab.im-fab-higanbana {
+    background: none;
+    box-shadow: none;
+    border: none;
+    border-radius: 0;
+    overflow: visible;
+}
+#imessage-fab.im-fab-higanbana:hover {
+    transform: translateY(-2px) scale(1.08);
+    box-shadow: none;
+}
+#imessage-fab.im-fab-higanbana:active {
+    transform: scale(.92);
+}
+#imessage-fab.im-fab-higanbana .im-fab-screen {
+    width: 100%; height: 100%;
+    overflow: visible;
+}
+#imessage-fab.im-fab-higanbana .im-fab-screen svg { display: none; }
+#imessage-fab.im-fab-higanbana .im-fab-screen img {
+    width: 160%; height: 160%;
+    max-width: none;
+    margin: -30% 0 0 -30%;
+    object-fit: contain;
+    filter: drop-shadow(0 0 6px rgba(139, 0, 0, .4));
+}
+#imessage-fab.im-fab-higanbana .im-fab-badge {
+    background: #c0392b;
+    color: #080608;
+    border-radius: 9px;
+    border-color: #080608;
+    box-shadow: 0 0 6px rgba(192, 57, 43, .5);
 }
