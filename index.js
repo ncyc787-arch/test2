@@ -5,7 +5,7 @@
 import { eventSource, event_types } from '../../../../script.js';
 import { reloadRoster, getRoster } from './roster.js';
 import { loadState, getSettings, saveSettings } from './state.js';
-import { render, handleAction, updateFabBadge, handleFileInput, handleSettingChange } from './ui.js';
+import { render, handleAction, updateFabBadge, handleFileInput, handleSettingChange, showContextMenu, closeContextMenu, applyTheme } from './ui.js';
 import {
     syncToMainChat, syncFromMainChat, clearMainChatInjection, debugInjection,
     injectIntoChatCompletion, startAutoMessageLoop, stopAutoMessageLoop,
@@ -87,7 +87,88 @@ function injectExtensionPanel() {
     hideFabHint.style.cssText = 'display:block;opacity:.7;padding-left:24px';
     hideFabHint.textContent = 'Убирает круглую иконку. Расширение продолжает работать в фоне.';
 
-    inlineDrawerContent.append(enabledLabel, enabledHint, hideFabLabel, hideFabHint);
+    // Дропдаун: Анимация уведомления
+    const animLabel = document.createElement('label');
+    animLabel.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:10px;margin-bottom:6px';
+
+    const animText = document.createElement('span');
+    animText.textContent = 'Анимация уведомления';
+
+    const animSelect = document.createElement('select');
+    animSelect.id = 'imessage-ext-fab-anim';
+    animSelect.style.cssText = 'flex:1;padding:4px 8px;border-radius:6px;background:#2a2a2c;color:#fff;border:1px solid rgba(255,255,255,.15);font-family:inherit;font-size:13px';
+    [
+        ['none', 'Нет'],
+        ['shake', 'Тряска'],
+        ['wiggle', 'Покачивание'],
+        ['ring', 'Звонок'],
+        ['pulse', 'Пульс'],
+    ].forEach(([val, lbl]) => {
+        const opt = document.createElement('option');
+        opt.value = val;
+        opt.textContent = lbl;
+        if ((settings.fabAnimation || 'wiggle') === val) opt.selected = true;
+        animSelect.appendChild(opt);
+    });
+    animLabel.append(animText, animSelect);
+
+    const animHint = document.createElement('small');
+    animHint.style.cssText = 'display:block;opacity:.7;padding-left:24px;margin-bottom:10px';
+    animHint.textContent = 'Как иконка реагирует на новое сообщение (только когда iMessage свёрнут).';
+
+    // Дропдаун: Тема телефона
+    const themeLabel = document.createElement('label');
+    themeLabel.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:10px;margin-bottom:6px';
+
+    const themeText = document.createElement('span');
+    themeText.textContent = 'Тема телефона';
+
+    const themeSelect = document.createElement('select');
+    themeSelect.id = 'imessage-ext-phone-theme';
+    themeSelect.style.cssText = 'flex:1;padding:4px 8px;border-radius:6px;background:#2a2a2c;color:#fff;border:1px solid rgba(255,255,255,.15);font-family:inherit;font-size:13px';
+    [
+        ['default', 'iMessage (тёмная)'],
+        ['kawaii', '♡ Kawaii'],
+    ].forEach(([val, lbl]) => {
+        const opt = document.createElement('option');
+        opt.value = val;
+        opt.textContent = lbl;
+        if ((settings.phoneTheme || 'default') === val) opt.selected = true;
+        themeSelect.appendChild(opt);
+    });
+    themeLabel.append(themeText, themeSelect);
+
+    const themeHint = document.createElement('small');
+    themeHint.style.cssText = 'display:block;opacity:.7;padding-left:24px;margin-bottom:10px';
+    themeHint.textContent = 'Внешний вид телефона: цвета, шрифт, форма кнопок.';
+
+    // Слайдер: Размер иконки
+    const sizeLabel = document.createElement('label');
+    sizeLabel.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:10px;margin-bottom:6px';
+
+    const sizeText = document.createElement('span');
+    sizeText.textContent = 'Размер иконки';
+
+    const sizeValue = document.createElement('span');
+    sizeValue.style.cssText = 'min-width:36px;text-align:right;font-size:13px;opacity:.8';
+    sizeValue.textContent = `${settings.fabSize || 56}px`;
+
+    const sizeRange = document.createElement('input');
+    sizeRange.id = 'imessage-ext-fab-size';
+    sizeRange.type = 'range';
+    sizeRange.min = '32';
+    sizeRange.max = '128';
+    sizeRange.step = '4';
+    sizeRange.value = String(settings.fabSize || 56);
+    sizeRange.style.cssText = 'flex:1;accent-color:#0a84ff';
+
+    sizeLabel.append(sizeText, sizeRange, sizeValue);
+
+    const sizeHint = document.createElement('small');
+    sizeHint.style.cssText = 'display:block;opacity:.7;padding-left:24px;margin-bottom:10px';
+    sizeHint.textContent = 'Размер плавающей кнопки на экране (32–128px).';
+
+    inlineDrawerContent.append(enabledLabel, enabledHint, hideFabLabel, hideFabHint, animLabel, animHint, themeLabel, themeHint, sizeLabel, sizeHint);
     inlineDrawer.append(inlineDrawerToggle, inlineDrawerContent);
 
     // ── События ──
@@ -103,6 +184,28 @@ function injectExtensionPanel() {
         s.hideFab = hideFabCb.checked;
         saveSettings();
         applyFabVisibility();
+    });
+
+    animSelect.addEventListener('change', () => {
+        const s = getSettings();
+        s.fabAnimation = animSelect.value;
+        saveSettings();
+    });
+
+    themeSelect.addEventListener('change', () => {
+        const s = getSettings();
+        s.phoneTheme = themeSelect.value;
+        saveSettings();
+        applyTheme();
+    });
+
+    sizeRange.addEventListener('input', () => {
+        const v = parseInt(sizeRange.value, 10);
+        sizeValue.textContent = `${v}px`;
+        const s = getSettings();
+        s.fabSize = v;
+        saveSettings();
+        applyTheme();
     });
 }
 
@@ -343,6 +446,82 @@ function bindEvents() {
         }
     });
 
+    // ── Long press → контекстное меню (мобильные) ──
+    let longPressState = null;
+    const LONG_PRESS_MS = 400;
+    const LONG_PRESS_MOVE_THRESHOLD = 10;
+
+    modal.addEventListener('touchstart', (e) => {
+        // Только на мобилках (hover: none)
+        if (window.matchMedia('(hover: hover)').matches) return;
+        const msgEl = e.target.closest?.('.im-msg');
+        if (!msgEl) return;
+        // Не мешаем кнопкам, ссылкам, инпутам
+        const tag = e.target.tagName;
+        if (tag === 'BUTTON' || tag === 'A' || tag === 'INPUT' || tag === 'TEXTAREA') return;
+        if (e.target.closest?.('button, a, input, textarea, label, .im-sticker-panel')) return;
+
+        const t = e.touches[0];
+        const timer = setTimeout(() => {
+            if (!longPressState) return;
+            longPressState.fired = true;
+
+            // Вибрация
+            try { navigator.vibrate(30); } catch {}
+
+            // Визуальный фидбек
+            msgEl.classList.add('im-msg-held');
+
+            // Определяем данные сообщения
+            const chatBody = msgEl.closest('.im-chat-body');
+            const allMsgs = chatBody ? [...chatBody.querySelectorAll('.im-msg')] : [];
+            const msgIndex = allMsgs.indexOf(msgEl);
+
+            // Получаем contactId и данные из state
+            const st = loadState();
+            const contactId = st.openContactId;
+            if (!contactId) return;
+
+            const msgs = st.messages?.[contactId] || [];
+            // Маппинг: DOM-элементы .im-msg не включают date-sep, typing, и т.д.
+            // Но индексы DOM-сообщений соответствуют msgs[] (каждое сообщение = один .im-msg)
+            // Нужно отфильтровать элементы типа .im-typing и .im-date-sep
+            const realMsgEls = allMsgs.filter(el => !el.classList.contains('im-typing'));
+            const realIdx = realMsgEls.indexOf(msgEl);
+            if (realIdx < 0 || realIdx >= msgs.length) return;
+
+            const msg = msgs[realIdx];
+            const isLastContactMsg = msg.from !== 'user' && realIdx === msgs.length - 1;
+
+            showContextMenu(contactId, msg.ts, msg, msgEl.getBoundingClientRect(), isLastContactMsg);
+        }, LONG_PRESS_MS);
+
+        longPressState = { timer, x: t.clientX, y: t.clientY, fired: false, msgEl };
+    }, { passive: true });
+
+    modal.addEventListener('touchmove', (e) => {
+        if (!longPressState) return;
+        const t = e.touches[0];
+        if (Math.abs(t.clientX - longPressState.x) > LONG_PRESS_MOVE_THRESHOLD ||
+            Math.abs(t.clientY - longPressState.y) > LONG_PRESS_MOVE_THRESHOLD) {
+            clearTimeout(longPressState.timer);
+            longPressState = null;
+        }
+    }, { passive: true });
+
+    const cancelLongPress = (e) => {
+        if (!longPressState) return;
+        clearTimeout(longPressState.timer);
+        if (longPressState.fired) {
+            // Предотвращаем клик/тап после long press
+            e.preventDefault();
+            e.stopPropagation();
+        }
+        longPressState = null;
+    };
+    modal.addEventListener('touchend', cancelLongPress, { passive: false });
+    modal.addEventListener('touchcancel', cancelLongPress, { passive: false });
+
     window.addEventListener('imessage:rerender', () => {
         const m = document.getElementById('imessage-modal');
         if (m?.classList.contains('open')) render();
@@ -390,6 +569,7 @@ async function init() {
 
     // Применяем начальное состояние enabled/hideFab
     applyEnabledState();
+    applyTheme();
 
     if (eventSource && event_types) {
         eventSource.on(event_types.CHAT_CHANGED, () => { if (isEnabled()) onChatChanged(); });
@@ -447,6 +627,19 @@ window.imReset = async () => {
 };
 window.imReload = async () => { const n = await reloadRoster(); console.log(LOG, 'контактов:', n); render(); };
 window.imInject = debugInjection;
+window.imTestAnim = () => {
+    const fab = document.getElementById('imessage-fab');
+    if (!fab) { console.log('FAB not found'); return; }
+    const animType = getSettings().fabAnimation || 'wiggle';
+    const cls = `im-fab-anim-${animType}`;
+    console.log('[iMessage] testing animation:', cls);
+    ['im-fab-anim-shake','im-fab-anim-wiggle','im-fab-anim-ring','im-fab-anim-pulse'].forEach(c => fab.classList.remove(c));
+    void fab.offsetWidth;
+    fab.classList.add(cls);
+    const cleanup = () => fab.classList.remove(cls);
+    fab.addEventListener('animationend', cleanup, { once: true });
+    setTimeout(cleanup, 1000);
+};
 window.imSyncFromMain = () => {
     const n = syncFromMainChat();
     console.log(LOG, `извлечено: ${n}`);

@@ -94,6 +94,16 @@ const defaultSettings = () => ({
     autoMaxMinutes: 180,    // макс через сколько
     autoProbability: 0.4,   // вероятность что вообще напишет (0..1)
 
+    // Анимация иконки FAB при новом сообщении
+    // 'none' | 'shake' | 'wiggle' | 'ring' | 'pulse'
+    fabAnimation: 'wiggle',
+
+    // Тема телефона: 'default' | 'kawaii'
+    phoneTheme: 'default',
+
+    // Размер иконки FAB (px)
+    fabSize: 56,
+
     avatars: {},            // {contactId: dataURL}
     fabPosition: { right: 20, top: null },
 

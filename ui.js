@@ -90,6 +90,9 @@ function totalUnread() {
     return Object.values(s.unread || {}).reduce((a, b) => a + (b || 0), 0);
 }
 
+let _prevUnread = 0;
+const FAB_ANIM_CLASSES = ['im-fab-anim-shake', 'im-fab-anim-wiggle', 'im-fab-anim-ring', 'im-fab-anim-pulse'];
+
 // ══════════════════════════════════════════════════════════
 // ЭКРАНЫ
 // ══════════════════════════════════════════════════════════
@@ -811,6 +814,111 @@ function wrap(bodyHTML, activeView = 'list', bodyClass = '') {
 }
 
 // ══════════════════════════════════════════════════════════
+// CONTEXT MENU (long press на мобилке)
+// ══════════════════════════════════════════════════════════
+
+export function closeContextMenu() {
+    const old = document.getElementById('im-ctx-backdrop');
+    if (old) old.remove();
+    const oldMenu = document.getElementById('im-ctx-menu');
+    if (oldMenu) oldMenu.remove();
+    // Снимаем held-стиль со всех сообщений
+    document.querySelectorAll('.im-msg-held').forEach(el => el.classList.remove('im-msg-held'));
+}
+
+/**
+ * Показывает контекстное меню рядом с сообщением.
+ * @param {string} contactId
+ * @param {number} msgTs - timestamp сообщения
+ * @param {object} msg - объект сообщения {from, text, ts, ...}
+ * @param {DOMRect} anchorRect - getBoundingClientRect() элемента сообщения
+ * @param {boolean} isLastContactMsg - последнее сообщение контакта (показать реролл)
+ */
+export function showContextMenu(contactId, msgTs, msg, anchorRect, isLastContactMsg) {
+    closeContextMenu();
+
+    // Backdrop
+    const backdrop = document.createElement('div');
+    backdrop.id = 'im-ctx-backdrop';
+    backdrop.className = 'im-ctx-backdrop';
+    backdrop.addEventListener('click', (e) => { e.preventDefault(); closeContextMenu(); });
+    backdrop.addEventListener('touchend', (e) => { e.preventDefault(); closeContextMenu(); });
+
+    // Menu
+    const menu = document.createElement('div');
+    menu.id = 'im-ctx-menu';
+    menu.className = 'im-ctx-menu';
+    const currentTheme = getSettings().phoneTheme || 'default';
+    if (currentTheme === 'kawaii') menu.classList.add('im-theme-kawaii');
+
+    // --- Пункты ---
+    const items = [];
+
+    // 1. Копировать (если есть текст)
+    if (msg.text && !msg.deleted) {
+        items.push({ icon: '\u{1F4CB}', label: 'Копировать', action: 'copy-msg' });
+    }
+
+    // 2. Перегенерировать (только последнее сообщение контакта)
+    if (isLastContactMsg && msg.from !== 'user') {
+        items.push({ icon: '\u{1F504}', label: 'Перегенерировать', action: 'reroll' });
+    }
+
+    // 3. Удалить (всегда, если не удалено)
+    if (!msg.deleted) {
+        items.push({ icon: '\u{1F5D1}️', label: 'Удалить', action: 'delete-msg', danger: true });
+    }
+
+    if (!items.length) return;
+
+    items.forEach(item => {
+        const btn = document.createElement('button');
+        btn.className = 'im-ctx-item' + (item.danger ? ' danger' : '');
+        btn.innerHTML = `<span class="im-ctx-item-icon">${item.icon}</span><span>${item.label}</span>`;
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            closeContextMenu();
+            if (item.action === 'copy-msg') {
+                try { navigator.clipboard.writeText(msg.text); } catch {}
+            } else {
+                // Делегируем в handleAction, создавая фейковый элемент с атрибутами
+                const fakeEl = document.createElement('div');
+                fakeEl.setAttribute('data-im-action', item.action);
+                fakeEl.setAttribute('data-im-contact', contactId);
+                fakeEl.setAttribute('data-im-msgts', String(msgTs));
+                handleAction(item.action, contactId, { target: fakeEl, preventDefault() {}, stopPropagation() {} });
+            }
+        });
+        menu.appendChild(btn);
+    });
+
+    (document.documentElement || document.body).appendChild(backdrop);
+    (document.documentElement || document.body).appendChild(menu);
+
+    // Позиционирование: над или под сообщением
+    const menuRect = menu.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    // Горизонтально: по центру сообщения, но не выходя за экран
+    let left = anchorRect.left + anchorRect.width / 2 - menuRect.width / 2;
+    left = Math.max(8, Math.min(vw - menuRect.width - 8, left));
+
+    // Вертикально: над сообщением если есть место, иначе под
+    let top;
+    if (anchorRect.top - menuRect.height - 8 > 0) {
+        top = anchorRect.top - menuRect.height - 8;
+    } else {
+        top = anchorRect.bottom + 8;
+    }
+    top = Math.max(8, Math.min(vh - menuRect.height - 8, top));
+
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+}
+
+// ══════════════════════════════════════════════════════════
 // RENDER
 // ══════════════════════════════════════════════════════════
 
@@ -827,6 +935,9 @@ export function render() {
     else html = viewList();
     root.innerHTML = html;
 
+    // Применить тему к .im-app (data-theme атрибут)
+    applyTheme();
+
     requestAnimationFrame(() => {
         const body = document.getElementById('im-chat-body');
         if (body) body.scrollTop = body.scrollHeight;
@@ -842,6 +953,70 @@ export function updateFabBadge() {
         if (!badge) { badge = document.createElement('div'); badge.className = 'im-fab-badge'; fab.appendChild(badge); }
         badge.textContent = n > 99 ? '99+' : String(n);
     } else if (badge) badge.remove();
+
+    // Анимация иконки при новом сообщении (только если модалка закрыта)
+    const modal = document.getElementById('imessage-modal');
+    const isOpen = modal?.classList.contains('open');
+    const animType = getSettings().fabAnimation || 'wiggle';
+
+    if (n > _prevUnread && !isOpen && animType !== 'none') {
+        // Анимируем сам FAB (не screen) — надёжнее работает с kawaii-темой
+        FAB_ANIM_CLASSES.forEach(c => fab.classList.remove(c));
+        void fab.offsetWidth; // reflow для перезапуска анимации
+        const cls = `im-fab-anim-${animType}`;
+        fab.classList.add(cls);
+        const cleanup = () => fab.classList.remove(cls);
+        fab.addEventListener('animationend', cleanup, { once: true });
+        // Фоллбек: если animationend не сработал — снять через 1с
+        setTimeout(cleanup, 1000);
+    }
+    _prevUnread = n;
+}
+
+// ══════════════════════════════════════════════════════════
+// THEME
+// ══════════════════════════════════════════════════════════
+
+export function applyTheme() {
+    const theme = getSettings().phoneTheme || 'default';
+
+    // .im-app data-theme
+    const app = document.querySelector('.im-app');
+    if (app) {
+        if (theme === 'default') app.removeAttribute('data-theme');
+        else app.setAttribute('data-theme', theme);
+    }
+
+    // FAB
+    const fab = document.getElementById('imessage-fab');
+    if (fab) {
+        fab.classList.toggle('im-fab-kawaii', theme === 'kawaii');
+
+        // Размер иконки
+        const size = getSettings().fabSize || 56;
+        fab.style.width = `${size}px`;
+        fab.style.height = `${size}px`;
+
+        const screen = fab.querySelector('.im-fab-screen');
+        if (screen) {
+            let img = screen.querySelector('img');
+            if (theme === 'kawaii') {
+                if (!img) {
+                    img = document.createElement('img');
+                    img.src = '/scripts/extensions/third-party/test2/fab-kawaii.png';
+                    img.alt = '♡';
+                    screen.appendChild(img);
+                }
+                img.style.display = '';
+                const svg = screen.querySelector('svg');
+                if (svg) svg.style.display = 'none';
+            } else {
+                if (img) img.style.display = 'none';
+                const svg = screen.querySelector('svg');
+                if (svg) svg.style.display = '';
+            }
+        }
+    }
 }
 
 // ══════════════════════════════════════════════════════════
