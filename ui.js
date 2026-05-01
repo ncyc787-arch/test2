@@ -866,6 +866,7 @@ export function showContextMenu(contactId, msgTs, msg, anchorRect, isLastContact
     menu.className = 'im-ctx-menu';
     const currentTheme = getSettings().phoneTheme || 'default';
     if (currentTheme === 'kawaii') menu.classList.add('im-theme-kawaii');
+    else if (currentTheme === 'cyberpunk') menu.classList.add('im-theme-cyberpunk');
 
     // --- Пункты ---
     const items = [];
@@ -1013,6 +1014,7 @@ export function applyTheme() {
     const fab = document.getElementById('imessage-fab');
     if (fab) {
         fab.classList.toggle('im-fab-kawaii', theme === 'kawaii');
+        fab.classList.toggle('im-fab-cyberpunk', theme === 'cyberpunk');
 
         // Размер иконки
         const size = getSettings().fabSize || 56;
@@ -1022,13 +1024,18 @@ export function applyTheme() {
         const screen = fab.querySelector('.im-fab-screen');
         if (screen) {
             let img = screen.querySelector('img');
-            if (theme === 'kawaii') {
+            const themeIcons = {
+                kawaii: { src: '/scripts/extensions/third-party/test2/fab-kawaii.png', alt: '♡' },
+                cyberpunk: { src: '/scripts/extensions/third-party/test2/fab-cyberpunk.png', alt: '⚡' },
+            };
+            const iconInfo = themeIcons[theme];
+            if (iconInfo) {
                 if (!img) {
                     img = document.createElement('img');
-                    img.src = '/scripts/extensions/third-party/test2/fab-kawaii.png';
-                    img.alt = '♡';
                     screen.appendChild(img);
                 }
+                img.src = iconInfo.src;
+                img.alt = iconInfo.alt;
                 img.style.display = '';
                 const svg = screen.querySelector('svg');
                 if (svg) svg.style.display = 'none';

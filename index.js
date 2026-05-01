@@ -129,6 +129,7 @@ function injectExtensionPanel() {
     [
         ['default', 'iMessage (тёмная)'],
         ['kawaii', '♡ Kawaii'],
+        ['cyberpunk', '⚡ Cyberpunk'],
     ].forEach(([val, lbl]) => {
         const opt = document.createElement('option');
         opt.value = val;
