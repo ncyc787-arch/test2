@@ -165,13 +165,19 @@ function viewList() {
 
     const currentThemeList = (getSettings().phoneTheme || 'default');
     const isHiganbana = currentThemeList === 'higanbana';
+    const isKawaii = currentThemeList === 'kawaii';
     const listTitle = isHiganbana ? 'メッセージ' : 'Сообщения';
     const searchPlaceholder = isHiganbana ? '検索...' : 'Поиск';
 
-    const higanbanaStrip = isHiganbana ? `
-    <div class="im-flower-strip">
-        <img src="/scripts/extensions/third-party/test2/higanbana-strip.jpeg" alt="" />
-    </div>` : '';
+    const isCyberpunk = currentThemeList === 'cyberpunk';
+    let decorStrip = '';
+    if (isHiganbana) {
+        decorStrip = `<div class="im-flower-strip"><img src="/scripts/extensions/third-party/test2/higanbana-strip.jpeg" alt="" /></div>`;
+    } else if (isKawaii) {
+        decorStrip = `<div class="im-kawaii-strip"><img src="/scripts/extensions/third-party/test2/kawaii-strip.webp" alt="" /></div>`;
+    } else if (isCyberpunk) {
+        decorStrip = `<div class="im-cyber-strip"><img src="/scripts/extensions/third-party/test2/cyberpunk-strip.webp" alt="" /></div>`;
+    }
 
     const sectionLabel = isHiganbana ? `<div class="im-section-label">// 連絡先</div>` : '';
 
@@ -186,7 +192,7 @@ function viewList() {
             <span class="im-header-btn" data-im-action="close-app" title="Закрыть iMessage">${ICONS.close}</span>
         </div>
     </div>
-    ${higanbanaStrip}
+    ${decorStrip}
     <div class="im-search">
         <input type="text" class="im-search-input" placeholder="${searchPlaceholder}" data-im-search>
     </div>
