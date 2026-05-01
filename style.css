@@ -1696,150 +1696,176 @@ select.im-set-input option {
 }
 
 /* ═══════════════════════════════════════════
-   THEME: Cyberpunk — неоновый стиль
+   THEME: Cyberpunk — фиолетово-неоновый стиль
    ═══════════════════════════════════════════ */
 .im-app[data-theme="cyberpunk"] {
-    --im-bg: #0a0a12;
-    --im-bg-header: rgba(10, 10, 18, .95);
-    --im-bg-input: #0d0d1a;
-    --im-bg-msg-user: rgba(0, 255, 255, .10);
-    --im-bg-msg-contact: rgba(255, 255, 255, .04);
-    --im-bg-field: rgba(0, 255, 255, .08);
-    --im-bg-section: rgba(0, 255, 255, .04);
-    --im-color: #e0f7fa;
-    --im-color-muted: #4dd0e1;
-    --im-color-accent: #00ffff;
+    --im-bg: #07040f;
+    --im-bg-header: #0a0618;
+    --im-bg-input: #0d0820;
+    --im-bg-msg-user: #1e0e40;
+    --im-bg-msg-contact: #110828;
+    --im-bg-field: #0f0824;
+    --im-bg-section: rgba(123, 92, 229, .06);
+    --im-color: #d4b8ff;
+    --im-color-muted: #3d2a6e;
+    --im-color-accent: #7b5ce5;
     --im-color-danger: #ff1744;
-    --im-color-success: #00e676;
-    --im-border: rgba(0, 255, 255, .15);
-    --im-border-light: rgba(0, 255, 255, .08);
-    --im-border-header: rgba(0, 255, 255, .25);
-    --im-radius-app: 4px;
-    --im-radius-msg: 4px;
-    --im-radius-btn: 2px;
-    --im-radius-field: 4px;
-    --im-radius-section: 4px;
-    --im-radius-avatar: 4px;
-    --im-radius-badge: 2px;
-    --im-radius-input-btn: 4px;
+    --im-color-success: #00e5c8;
+    --im-border: #2a1a55;
+    --im-border-light: #1a0f35;
+    --im-border-header: #1e0f3a;
+    --im-radius-app: 16px;
+    --im-radius-msg: 10px;
+    --im-radius-btn: 8px;
+    --im-radius-field: 8px;
+    --im-radius-section: 10px;
+    --im-radius-avatar: 10px;
+    --im-radius-badge: 9px;
+    --im-radius-input-btn: 8px;
     --im-font: 'Orbitron', monospace, sans-serif;
-    --im-shadow-app: 0 0 30px rgba(0,255,255,.15), 0 0 60px rgba(0,255,255,.05);
-    border: 1px solid rgba(0, 255, 255, .2);
+    --im-shadow-app: 0 0 40px rgba(123, 92, 229, .12), 0 0 80px rgba(123, 92, 229, .04);
+    border: 1px solid #2a1a55;
+}
+
+/* Cyberpunk: scan line decoration */
+.im-app[data-theme="cyberpunk"] .im-header::after {
+    content: '';
+    display: block;
+    height: 2px;
+    background: repeating-linear-gradient(90deg, #1e0e40 0px, #1e0e40 4px, transparent 4px, transparent 8px);
+    opacity: .5;
 }
 
 /* Cyberpunk: header */
 .im-app[data-theme="cyberpunk"] .im-header {
-    background: rgba(10, 10, 18, .95);
-    border-bottom: 1px solid rgba(0, 255, 255, .25);
-    backdrop-filter: blur(12px);
-    box-shadow: 0 1px 12px rgba(0, 255, 255, .08);
+    background: #0a0618;
+    border-bottom: 1px solid #1e0f3a;
+    backdrop-filter: none;
 }
 .im-app[data-theme="cyberpunk"] .im-header-title {
     text-transform: uppercase;
-    letter-spacing: 2px;
-    font-size: 14px;
-    text-shadow: 0 0 8px rgba(0, 255, 255, .5);
+    letter-spacing: 3px;
+    font-size: 13px;
+    color: #00e5c8;
 }
 .im-app[data-theme="cyberpunk"] .im-header-btn {
-    color: #00ffff;
+    color: #00e5c8;
+    opacity: .7;
 }
 .im-app[data-theme="cyberpunk"] .im-header-btn:hover,
 .im-app[data-theme="cyberpunk"] .im-header-btn:active {
-    background: rgba(0, 255, 255, .1);
-    text-shadow: 0 0 6px rgba(0, 255, 255, .6);
+    background: rgba(123, 92, 229, .12);
+    opacity: 1;
 }
 
 /* Cyberpunk: messages */
 .im-app[data-theme="cyberpunk"] .im-msg-user {
-    background: linear-gradient(135deg, rgba(0,255,255,.12), rgba(0,255,255,.06));
-    border: 1px solid rgba(0, 255, 255, .2);
-    box-shadow: 0 0 8px rgba(0, 255, 255, .15);
-    color: #e0f7fa;
+    background: #1e0e40;
+    border: 1px solid #7b5ce5;
+    color: #e8d9ff;
+}
+.im-app[data-theme="cyberpunk"] .im-msg-user.im-msg-tail {
+    border-bottom-right-radius: 3px;
 }
 .im-app[data-theme="cyberpunk"] .im-msg-contact {
-    background: rgba(255, 255, 255, .04);
-    border: 1px solid rgba(255, 255, 255, .08);
-    box-shadow: 0 0 6px rgba(0, 255, 255, .05);
-    color: #b0bec5;
+    background: #110828;
+    border: 1px solid #2a1a55;
+    color: #c4a8ff;
+}
+.im-app[data-theme="cyberpunk"] .im-msg-contact.im-msg-tail {
+    border-bottom-left-radius: 3px;
 }
 
 /* Cyberpunk: input */
 .im-app[data-theme="cyberpunk"] .im-chat-input {
-    border-top: 1px solid rgba(0, 255, 255, .2);
-    background: #0a0a12;
+    border-top: 1px solid #1e0f3a;
+    background: #0d0820;
 }
 .im-app[data-theme="cyberpunk"] .im-chat-field {
-    border: 1px solid rgba(0, 255, 255, .2);
-    color: #e0f7fa;
+    background: #150b30;
+    border: 1px solid #3d2a6e;
+    color: #c4a8ff;
 }
 .im-app[data-theme="cyberpunk"] .im-chat-field:focus {
-    border-color: #00ffff;
-    box-shadow: 0 0 8px rgba(0, 255, 255, .3);
+    border-color: #7b5ce5;
 }
-.im-app[data-theme="cyberpunk"] .im-chat-field::placeholder { color: rgba(0, 255, 255, .3); }
+.im-app[data-theme="cyberpunk"] .im-chat-field::placeholder { color: #3d2a6e; }
 .im-app[data-theme="cyberpunk"] .im-chat-send {
-    background: rgba(0, 255, 255, .15);
-    border: 1px solid rgba(0, 255, 255, .3);
-    color: #00ffff;
-    box-shadow: 0 0 8px rgba(0, 255, 255, .2);
+    background: #2a1460;
+    border: 1px solid #7b5ce5;
+    color: #a78bfa;
 }
 .im-app[data-theme="cyberpunk"] .im-chat-send:hover {
-    background: rgba(0, 255, 255, .25);
-    box-shadow: 0 0 14px rgba(0, 255, 255, .4);
+    background: #3d1e8a;
+    color: #d4b8ff;
 }
-.im-app[data-theme="cyberpunk"] .im-chat-attach { color: #00ffff; }
-.im-app[data-theme="cyberpunk"] .im-chat-attach:hover { text-shadow: 0 0 6px rgba(0,255,255,.6); }
+.im-app[data-theme="cyberpunk"] .im-chat-attach { color: #7b5ce5; opacity: .5; }
+.im-app[data-theme="cyberpunk"] .im-chat-attach:hover { opacity: 1; }
 
 /* Cyberpunk: search */
 .im-app[data-theme="cyberpunk"] .im-search {
-    background: #0a0a12;
+    background: #08041a;
+    border-bottom: 1px solid #1a0f35;
 }
 .im-app[data-theme="cyberpunk"] .im-search-input {
-    border: 1px solid rgba(0, 255, 255, .15);
-    color: #e0f7fa;
+    background: #0f0824;
+    border: 1px solid #2a1a55;
+    color: #a78bfa;
 }
 .im-app[data-theme="cyberpunk"] .im-search-input:focus {
-    border-color: #00ffff;
-    box-shadow: 0 0 6px rgba(0, 255, 255, .2);
+    border-color: #7b5ce5;
 }
-.im-app[data-theme="cyberpunk"] .im-search-input::placeholder { color: rgba(0, 255, 255, .3); }
+.im-app[data-theme="cyberpunk"] .im-search-input::placeholder { color: #3d2a6e; }
 
 /* Cyberpunk: list */
+.im-app[data-theme="cyberpunk"] .im-list-row {
+    border-color: #110828;
+}
 .im-app[data-theme="cyberpunk"] .im-list-row:hover,
 .im-app[data-theme="cyberpunk"] .im-list-row:active {
-    background: rgba(0, 255, 255, .06);
+    background: #0f0824;
 }
 .im-app[data-theme="cyberpunk"] .im-list-row.has-unread::before {
-    border-radius: 1px;
-    background: #00ffff;
-    box-shadow: 0 0 4px rgba(0, 255, 255, .6);
+    background: #00e5c8;
+    animation: blink-cp 2.5s infinite;
+}
+@keyframes blink-cp {
+    0%, 100% { opacity: 1; }
+    50% { opacity: .2; }
 }
 .im-app[data-theme="cyberpunk"] .im-list-name {
-    color: #e0f7fa;
+    color: #d4b8ff;
+    letter-spacing: .06em;
+}
+.im-app[data-theme="cyberpunk"] .im-list-preview {
+    color: #3d2a6e;
+}
+.im-app[data-theme="cyberpunk"] .im-list-time {
+    color: #3d2a6e;
 }
 
 /* Cyberpunk: avatar */
 .im-app[data-theme="cyberpunk"] .im-avatar {
-    border: 1px solid rgba(0, 255, 255, .25);
-    box-shadow: 0 0 6px rgba(0, 255, 255, .1);
+    border: 1px solid #3d2a6e;
 }
 
 /* Cyberpunk: date separator */
-.im-app[data-theme="cyberpunk"] .im-date-sep { color: #4dd0e1; }
-.im-app[data-theme="cyberpunk"] .im-date-sep b { color: #00ffff; text-shadow: 0 0 4px rgba(0,255,255,.4); }
+.im-app[data-theme="cyberpunk"] .im-date-sep { color: #2a1a55; letter-spacing: .2em; }
+.im-app[data-theme="cyberpunk"] .im-date-sep b { color: #7b5ce5; }
 
 /* Cyberpunk: typing dots */
-.im-app[data-theme="cyberpunk"] .im-typing span { background: #00ffff; box-shadow: 0 0 4px rgba(0,255,255,.5); }
+.im-app[data-theme="cyberpunk"] .im-typing span { background: #a78bfa; animation: blink-cp 2s infinite; }
 
 /* Cyberpunk: buttons */
 .im-app[data-theme="cyberpunk"] .im-set-btn {
-    border: 1px solid rgba(0, 255, 255, .2);
-    color: #00ffff;
-    background: rgba(0, 255, 255, .06);
+    border: 1px solid #3d2a6e;
+    color: #a78bfa;
+    background: #0f0824;
 }
 .im-app[data-theme="cyberpunk"] .im-set-btn:hover {
-    background: rgba(0, 255, 255, .12);
-    box-shadow: 0 0 8px rgba(0, 255, 255, .2);
+    background: #150b30;
+    color: #d4b8ff;
+    border-color: #7b5ce5;
 }
 .im-app[data-theme="cyberpunk"] .im-set-btn.danger {
     border-color: rgba(255, 23, 68, .3);
@@ -1847,91 +1873,89 @@ select.im-set-input option {
     background: rgba(255, 23, 68, .06);
 }
 .im-app[data-theme="cyberpunk"] .im-sticker-btn {
-    color: #00ffff;
+    color: #7b5ce5;
 }
 .im-app[data-theme="cyberpunk"] .im-sticker-btn:hover {
-    text-shadow: 0 0 6px rgba(0, 255, 255, .6);
+    color: #a78bfa;
 }
 
 /* Cyberpunk: unread badge */
 .im-app[data-theme="cyberpunk"] .im-unread-badge {
-    background: #00ffff;
-    color: #0a0a12;
-    box-shadow: 0 0 6px rgba(0, 255, 255, .5);
+    background: #7b5ce5;
+    color: #e8d9ff;
 }
 
 /* Cyberpunk: sticker panel */
 .im-app[data-theme="cyberpunk"] .im-sticker-panel {
-    background: rgba(10, 10, 18, .95);
-    border-top: 1px solid rgba(0, 255, 255, .2);
+    background: rgba(10, 6, 24, .95);
+    border-top: 1px solid #1e0f3a;
     backdrop-filter: blur(12px);
 }
 .im-app[data-theme="cyberpunk"] .im-sticker-thumb {
-    border: 1px solid rgba(0, 255, 255, .1);
+    border: 1px solid #2a1a55;
 }
 .im-app[data-theme="cyberpunk"] .im-sticker-thumb:hover {
-    border-color: #00ffff;
-    box-shadow: 0 0 8px rgba(0, 255, 255, .3);
+    border-color: #7b5ce5;
 }
 
 /* Cyberpunk: scrollbar */
 .im-app[data-theme="cyberpunk"] ::-webkit-scrollbar-thumb {
-    background: rgba(0, 255, 255, .3) !important;
+    background: #2a1460 !important;
 }
 
 /* Cyberpunk: status bar */
 .im-app[data-theme="cyberpunk"] .im-statusbar {
-    background: rgba(10, 10, 18, .95);
-    color: #00ffff;
-    opacity: .8;
-    border-bottom: 1px solid rgba(0, 255, 255, .1);
-    text-shadow: 0 0 4px rgba(0, 255, 255, .4);
+    background: #05030c;
+    color: #00e5c8;
+    opacity: 1;
+    border-bottom: 1px solid #1a0f35;
+    letter-spacing: .1em;
 }
 
 /* Cyberpunk: me page */
 .im-app[data-theme="cyberpunk"] .im-me-avatar {
-    border: 1px solid rgba(0, 255, 255, .3);
-    box-shadow: 0 0 12px rgba(0, 255, 255, .15);
+    border: 1px solid #3d2a6e;
 }
 .im-app[data-theme="cyberpunk"] .im-me-avatar-fallback {
-    background: linear-gradient(135deg, #0d0d1a, #1a1a2e);
-    color: #00ffff;
+    background: #1e0e40;
+    color: #a78bfa;
 }
 
 /* Cyberpunk: status indicators */
-.im-app[data-theme="cyberpunk"] .im-status.ok { color: #00e676; background: rgba(0, 230, 118, .1); }
-.im-app[data-theme="cyberpunk"] .im-status.warn { color: #ffab00; background: rgba(255, 171, 0, .1); }
-.im-app[data-theme="cyberpunk"] .im-status.err { color: #ff1744; background: rgba(255, 23, 68, .1); }
+.im-app[data-theme="cyberpunk"] .im-status.ok { color: #00e5c8; background: rgba(0, 229, 200, .08); }
+.im-app[data-theme="cyberpunk"] .im-status.warn { color: #f4c430; background: rgba(244, 196, 48, .08); }
+.im-app[data-theme="cyberpunk"] .im-status.err { color: #ff1744; background: rgba(255, 23, 68, .08); }
 
 /* Cyberpunk: select dropdown */
 .im-app[data-theme="cyberpunk"] select.im-set-input {
-    background-image: linear-gradient(45deg, transparent 50%, #00ffff 50%), linear-gradient(135deg, #00ffff 50%, transparent 50%);
+    background-image: linear-gradient(45deg, transparent 50%, #7b5ce5 50%), linear-gradient(135deg, #7b5ce5 50%, transparent 50%);
 }
 .im-app[data-theme="cyberpunk"] select.im-set-input option {
-    background: #0a0a12;
-    color: #e0f7fa;
+    background: #07040f;
+    color: #d4b8ff;
 }
 
 /* Cyberpunk: contact info */
 .im-app[data-theme="cyberpunk"] .im-contact-name {
-    text-shadow: 0 0 8px rgba(0, 255, 255, .3);
+    color: #d4b8ff;
+    letter-spacing: .08em;
 }
 
 /* ── Cyberpunk: контекстное меню ── */
 .im-ctx-menu.im-theme-cyberpunk {
-    background: rgba(10, 10, 18, .95);
-    border: 1px solid rgba(0, 255, 255, .25);
-    border-radius: 4px;
-    box-shadow: 0 0 20px rgba(0, 255, 255, .15), 0 8px 32px rgba(0, 0, 0, .5);
+    background: rgba(10, 6, 24, .95);
+    border: 1px solid #3d2a6e;
+    border-radius: 10px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, .6);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
 }
 .im-ctx-menu.im-theme-cyberpunk .im-ctx-item {
-    color: #e0f7fa;
-    border-color: rgba(0, 255, 255, .1);
+    color: #d4b8ff;
+    border-color: #110828;
 }
 .im-ctx-menu.im-theme-cyberpunk .im-ctx-item:active {
-    background: rgba(0, 255, 255, .1);
+    background: #0f0824;
 }
 .im-ctx-menu.im-theme-cyberpunk .im-ctx-item.danger { color: #ff1744; }
 
