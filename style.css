@@ -1937,26 +1937,28 @@ select.im-set-input option {
 
 /* ── Cyberpunk: FAB ── */
 #imessage-fab.im-fab-cyberpunk {
-    background: radial-gradient(circle, #0d0d1a 60%, #1a1a2e);
-    box-shadow: 0 0 15px rgba(0, 255, 255, .3), 0 0 30px rgba(0, 255, 255, .1);
-    border: 1px solid rgba(0, 255, 255, .3);
-    border-radius: 6px;
+    background: none;
+    box-shadow: none;
+    border: none;
+    border-radius: 0;
+    overflow: visible;
 }
 #imessage-fab.im-fab-cyberpunk:hover {
-    transform: translateY(-2px) scale(1.06);
-    box-shadow: 0 0 20px rgba(0, 255, 255, .5), 0 0 40px rgba(0, 255, 255, .15);
+    transform: translateY(-2px) scale(1.08);
+    box-shadow: none;
 }
 #imessage-fab.im-fab-cyberpunk:active {
-    transform: scale(.93);
+    transform: scale(.92);
 }
 #imessage-fab.im-fab-cyberpunk .im-fab-screen {
-    width: 80%; height: 80%;
+    width: 100%; height: 100%;
+    overflow: visible;
 }
 #imessage-fab.im-fab-cyberpunk .im-fab-screen svg { display: none; }
 #imessage-fab.im-fab-cyberpunk .im-fab-screen img {
     width: 100%; height: 100%;
     object-fit: contain;
-    filter: drop-shadow(0 0 4px rgba(0, 255, 255, .5));
+    filter: drop-shadow(0 0 6px rgba(0, 255, 255, .4));
 }
 #imessage-fab.im-fab-cyberpunk .im-fab-badge {
     background: #00ffff;
