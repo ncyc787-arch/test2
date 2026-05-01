@@ -183,6 +183,30 @@
 .im-body-fill { overflow: hidden; }
 .im-body-fill.im-body-scrollable { overflow-y: auto; -webkit-overflow-scrolling: touch; }
 
+/* ── STATUS BAR ── */
+.im-statusbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 24px 2px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--im-color);
+    opacity: .6;
+    user-select: none;
+    flex-shrink: 0;
+    font-family: var(--im-font);
+    letter-spacing: .3px;
+}
+.im-statusbar-icons {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    font-size: 10px;
+}
+.im-statusbar-signal { letter-spacing: -2px; }
+.im-statusbar-battery { font-size: 11px; letter-spacing: -1px; }
+
 /* ── HEADER ── */
 .im-header {
     display: flex;
@@ -1264,6 +1288,46 @@ select.im-set-input option {
     .im-set-field.row input[type="checkbox"] {
         width: 22px; height: 22px;
     }
+
+    /* ── Kawaii mobile ── */
+    .im-app[data-theme="kawaii"] {
+        --im-radius-app: 0 !important;
+        border: none !important;
+        --im-shadow-app: none;
+    }
+    /* Ослабить сжатие шрифта для читабельности на мобилке */
+    .im-app[data-theme="kawaii"] .im-msg,
+    .im-app[data-theme="kawaii"] .im-list-name,
+    .im-app[data-theme="kawaii"] .im-list-preview,
+    .im-app[data-theme="kawaii"] .im-list-time,
+    .im-app[data-theme="kawaii"] .im-chat-field,
+    .im-app[data-theme="kawaii"] .im-search-input,
+    .im-app[data-theme="kawaii"] .im-set-label,
+    .im-app[data-theme="kawaii"] .im-set-input,
+    .im-app[data-theme="kawaii"] .im-set-btn,
+    .im-app[data-theme="kawaii"] .im-date-sep,
+    .im-app[data-theme="kawaii"] .im-contact-section-title,
+    .im-app[data-theme="kawaii"] .im-contact-section p,
+    .im-app[data-theme="kawaii"] .im-me-bio,
+    .im-app[data-theme="kawaii"] .im-statusbar {
+        transform: scaleX(.85);
+    }
+    .im-app[data-theme="kawaii"] .im-header-title,
+    .im-app[data-theme="kawaii"] .im-contact-name,
+    .im-app[data-theme="kawaii"] .im-me-name {
+        transform: scaleX(.88);
+    }
+    /* Touch targets */
+    .im-app[data-theme="kawaii"] .im-header-btn {
+        min-width: 44px; min-height: 44px;
+    }
+    .im-app[data-theme="kawaii"] .im-chat-send {
+        min-width: 40px; min-height: 40px;
+    }
+    /* Статус-бар safe-area */
+    .im-app[data-theme="kawaii"] .im-statusbar {
+        padding-top: 5px;
+    }
 }
 
 /* ── LONG PRESS — визуальный фидбек ── */
@@ -1349,6 +1413,9 @@ select.im-set-input option {
         }
         .im-list {
             padding-bottom: env(safe-area-inset-bottom);
+        }
+        .im-statusbar {
+            padding-top: calc(6px + env(safe-area-inset-top));
         }
     }
 }
@@ -1514,6 +1581,16 @@ select.im-set-input option {
     background-image: linear-gradient(45deg, transparent 50%, #b3a4da 50%), linear-gradient(135deg, #b3a4da 50%, transparent 50%);
 }
 
+/* Kawaii: статус-бар */
+.im-app[data-theme="kawaii"] .im-statusbar {
+    background: linear-gradient(90deg, #fbd7fe, #d6e0ff);
+    color: #583276;
+    opacity: 1;
+    font-size: 10px;
+    border-bottom: 1px solid #d3c4e8;
+    padding: 5px 20px 3px;
+}
+
 /* Kawaii: Press Start 2P — сжать по ширине, вытянуть по высоте */
 .im-app[data-theme="kawaii"] {
     transform: scaleX(1);  /* контейнер не трогаем */
@@ -1543,6 +1620,11 @@ select.im-set-input option {
 .im-app[data-theme="kawaii"] .im-me-name {
     transform: scaleX(.82);
     transform-origin: left center;
+}
+.im-app[data-theme="kawaii"] .im-statusbar {
+    transform: scaleX(.82);
+    transform-origin: left center;
+    letter-spacing: 0px;
 }
 
 /* ── Kawaii: контекстное меню (вне .im-app) ── */

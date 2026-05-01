@@ -91,6 +91,7 @@ function totalUnread() {
 }
 
 let _prevUnread = 0;
+let _statusBarTimer = null;
 const FAB_ANIM_CLASSES = ['im-fab-anim-shake', 'im-fab-anim-wiggle', 'im-fab-anim-ring', 'im-fab-anim-pulse'];
 
 // ══════════════════════════════════════════════════════════
@@ -809,8 +810,23 @@ function buildStickerPanel(contactId) {
     return `<div class="im-sticker-tabs">${tabs}</div><div class="im-sticker-grid">${stickers}</div>`;
 }
 
+function updateStatusBarTime() {
+    const el = document.querySelector('.im-statusbar-time');
+    if (!el) return;
+    const now = new Date();
+    el.textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
 function wrap(bodyHTML, activeView = 'list', bodyClass = '') {
-    return `<div class="im-app-body ${bodyClass}">${bodyHTML}</div>`;
+    const statusBar = `<div class="im-statusbar">
+        <span class="im-statusbar-time"></span>
+        <span class="im-statusbar-icons">
+            <span class="im-statusbar-signal">●●●●○</span>
+            <span class="im-statusbar-wifi">⌁</span>
+            <span class="im-statusbar-battery">▮▮▮▯</span>
+        </span>
+    </div>`;
+    return `<div class="im-app-body ${bodyClass}">${statusBar}${bodyHTML}</div>`;
 }
 
 // ══════════════════════════════════════════════════════════
@@ -937,6 +953,12 @@ export function render() {
 
     // Применить тему к .im-app (data-theme атрибут)
     applyTheme();
+
+    // Обновить время в статус-баре
+    updateStatusBarTime();
+    if (!_statusBarTimer) {
+        _statusBarTimer = setInterval(updateStatusBarTime, 30000);
+    }
 
     requestAnimationFrame(() => {
         const body = document.getElementById('im-chat-body');
